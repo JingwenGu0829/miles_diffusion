@@ -10,6 +10,7 @@ manager placement group.
 import hashlib
 import logging
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -29,11 +30,19 @@ logger = logging.getLogger(__name__)
 ENCODE_GPU_FRACTION = 0.3
 
 
+def resolve_media_path(media: str, prompt_data: str) -> str:
+    """Relative media paths are anchored at the dataset jsonl's directory (portable datasets)."""
+    if os.path.isabs(media):
+        return media
+    return str(Path(prompt_data).parent / media)
+
+
 def sft_sample_key(args, item: dict) -> tuple[str, int]:
     """Content-addressed cache filename and latent-sampling seed for one (media, prompt) item."""
     stat = Path(item["media"]).stat()
     digest = hashlib.sha256(
-        f"{args.sft_encoder_checkpoint}|{args.diffusion_height}x{args.diffusion_width}"
+        f"{args.diffusion_model_family}|{args.sft_encoder_checkpoint}"
+        f"|{args.diffusion_height}x{args.diffusion_width}"
         f"|{args.diffusion_output_num_frames}s{args.sft_frame_stride}"
         f"|{item['media']}|{stat.st_size}|{stat.st_mtime_ns}|{item['prompt']}".encode()
     ).digest()
@@ -43,47 +52,122 @@ def sft_sample_key(args, item: dict) -> tuple[str, int]:
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
 
 
-def read_media_clip(path: str, *, height: int, width: int, num_frames: int, frame_stride: int) -> torch.Tensor:
+def _probe_video(path: str) -> tuple[int, int, float]:
+    """(width, height, fps) of the first video stream."""
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,avg_frame_rate",
+            "-of",
+            "csv=p=0:s=,",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        width, height, rate = probe.stdout.strip().split(",")[:3]
+        num, _, den = rate.partition("/")
+        return int(width), int(height), float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        raise ValueError(f"ffprobe could not read {path}: {probe.stderr.strip()[:200]}") from None
+
+
+def _decode_video(path: str) -> tuple[torch.Tensor, float]:
+    """All frames as uint8 [T, C, H, W], plus the stream fps.
+
+    sgl-diffusion reads every media file the same way (``subprocess.run`` on
+    ffmpeg into a raw rgb24 stream, see minimax_h3/reference_encoding.py), and
+    ffmpeg is the only decoder available on every platform this trains on:
+    torchvision 0.26 -- the pinned version -- ships no video API at all, and
+    torchcodec has no Linux ARM build.
+    """
+    import numpy as np
+
+    width, height, fps = _probe_video(path)
+    decoded = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-an", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True,
+    )
+    if decoded.returncode != 0:
+        raise ValueError(f"ffmpeg failed on {path}: {decoded.stderr.decode()[:200]}")
+    frame_bytes = width * height * 3
+    if not decoded.stdout or len(decoded.stdout) % frame_bytes:
+        raise ValueError(
+            f"{path}: ffmpeg returned {len(decoded.stdout)} bytes, "
+            f"not a whole number of {width}x{height} rgb24 frames"
+        )
+    frames = np.frombuffer(decoded.stdout, dtype=np.uint8).reshape(-1, height, width, 3)
+    return torch.from_numpy(frames.copy()).permute(0, 3, 1, 2), fps
+
+
+def read_media_clip(path: str, *, height: int, width: int, num_frames: int, frame_stride: int) -> dict:
     if Path(path).suffix.lower() in IMAGE_EXTENSIONS:
         if num_frames != 1:
             raise ValueError(f"{path} is an image, which requires --diffusion-output-num-frames 1")
         import numpy as np
         from PIL import Image
 
-        frames = torch.from_numpy(np.asarray(Image.open(path).convert("RGB"))).permute(2, 0, 1)[None].float()
+        frames = torch.from_numpy(np.asarray(Image.open(path).convert("RGB"))).permute(2, 0, 1)[None]
+        fps = None
     else:
-        import torchvision
-
-        video, _, _ = torchvision.io.read_video(path, pts_unit="sec", output_format="TCHW")
+        video, fps = _decode_video(path)
         span = (num_frames - 1) * frame_stride + 1
         if video.shape[0] < span:
             raise ValueError(f"{path} has {video.shape[0]} frames, need {span}")
         start = (video.shape[0] - span) // 2
-        frames = video[start : start + span : frame_stride].float()
-    frames = frames / 127.5 - 1.0
+        frames = video[start : start + span : frame_stride]
 
-    scale = max(height / frames.shape[2], width / frames.shape[3])
-    new_h = max(height, round(frames.shape[2] * scale))
-    new_w = max(width, round(frames.shape[3] * scale))
-    frames = torch.nn.functional.interpolate(frames, size=(new_h, new_w), mode="bilinear", antialias=True)
-    top = (new_h - height) // 2
-    left = (new_w - width) // 2
-    return frames[:, :, top : top + height, left : left + width].permute(1, 0, 2, 3)
+    # Always emit uint8; each family owns its preprocessing.
+    if frames.shape[2:] != (height, width):
+        scale = max(height / frames.shape[2], width / frames.shape[3])
+        new_h = max(height, round(frames.shape[2] * scale))
+        new_w = max(width, round(frames.shape[3] * scale))
+        resized = torch.nn.functional.interpolate(frames.float(), size=(new_h, new_w), mode="bilinear", antialias=True)
+        top = (new_h - height) // 2
+        left = (new_w - width) // 2
+        frames = resized[:, :, top : top + height, left : left + width].round().clamp(0, 255).to(torch.uint8)
+    return {"video": frames.permute(1, 0, 2, 3), "fps": fps}
+
+
+def _relocate(obj, device: torch.device):
+    """Move every module/tensor found in a family's encoder structure."""
+    if isinstance(obj, (torch.nn.Module, torch.Tensor)):
+        return obj.to(device)
+    if isinstance(obj, dict):
+        return {key: _relocate(value, device) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_relocate(value, device) for value in obj)
+    return obj
 
 
 @ray.remote
 class SftEncodeActor:
+    """Loads the family encoder once; with --sft-offload-encoder it sleeps in
+    host RAM between encode bursts instead of holding the GPU for the whole run."""
+
     def __init__(self, args):
         from miles.rollout.encoder_hub import get_encoder
 
         self.args = args
         self.encoder_module = get_encoder(args.diffusion_model_family)
         self.encoder = self.encoder_module.load_encoder(args, torch.device("cuda"))
+        if args.sft_offload_encoder:
+            self.encoder = _relocate(self.encoder, torch.device("cpu"))
+            torch.cuda.empty_cache()
 
     def encode(self, items: list[dict], cache_dir: str) -> int:
         args = self.args
+        encoder = self.encoder
+        if args.sft_offload_encoder:
+            encoder = _relocate(encoder, torch.device("cuda"))
         for item in items:
-            pixels = read_media_clip(
+            media_clip = read_media_clip(
                 item["media"],
                 height=args.diffusion_height,
                 width=args.diffusion_width,
@@ -91,12 +175,15 @@ class SftEncodeActor:
                 frame_stride=args.sft_frame_stride,
             )
             generator = torch.Generator().manual_seed(item["latent_seed"])
-            pair = self.encoder_module.encode_sample(self.encoder, pixels, item["prompt"], generator)
+            pair = self.encoder_module.encode_sample(encoder, media_clip, item["prompt"], generator)
             out_path = Path(cache_dir) / item["cache_name"]
             # Temp-then-rename so an interrupted write never leaves a loadable-looking cache entry.
             tmp_path = out_path.with_name(out_path.name + ".tmp")
             torch.save(pair, tmp_path)
             os.replace(tmp_path, out_path)
+        if args.sft_offload_encoder:
+            self.encoder = _relocate(encoder, torch.device("cpu"))
+            torch.cuda.empty_cache()
         return len(items)
 
 
@@ -129,7 +216,12 @@ def _get_scheduler_grid(args) -> tuple[torch.Tensor, torch.Tensor]:
     if _scheduler_grid is None:
         config = load_function(args.train_pipeline_config_path)()
         scheduler = load_function(args.model_backend_path)(config).load_scheduler(args)
-        num_train_timesteps = int(scheduler.config.num_train_timesteps)
+        # Shift-only flow schedulers (H3) carry no num_train_timesteps; use the
+        # conventional 1000-point grid for them.
+        if hasattr(scheduler.config, "num_train_timesteps"):
+            num_train_timesteps = int(scheduler.config.num_train_timesteps)
+        else:
+            num_train_timesteps = 1000
         shift = args.fsdp_flow_shift
         sigmas = torch.linspace(1.0, 1.0 / num_train_timesteps, num_train_timesteps, dtype=torch.float64)
         sigmas = shift * sigmas / (1.0 + (shift - 1.0) * sigmas)
@@ -154,7 +246,7 @@ def generate_rollout(args, rollout_id, data_source, evaluation: bool = False) ->
         media = sample.metadata.get("video") or sample.metadata.get("image")
         if media is None:
             raise ValueError(f"sample {sample.index} metadata has neither 'video' nor 'image': {sample.metadata}")
-        item = {"media": media, "prompt": sample.prompt}
+        item = {"media": resolve_media_path(media, args.prompt_data), "prompt": sample.prompt}
         item["cache_name"], item["latent_seed"] = sft_sample_key(args, item)
         items.append(item)
 

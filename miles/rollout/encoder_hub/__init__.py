@@ -3,8 +3,9 @@
 Each family module provides:
 - ``load_encoder(args, device)``: load the frozen encode components (tokenizer/text
   encoder/VAE) from the ``--sft-encoder-checkpoint`` HF name or path;
-- ``encode_sample(encoder, pixels, prompt, generator)``: encode one media/prompt pair
-  into a cached train sample (clean latent + cond kwargs);
+- ``encode_sample(encoder, media_clip, prompt, generator)``: encode one decoded media dict
+  ``{"video": [C, T, H, W] uint8, "fps": float | None}`` into a cached train
+  sample (clean latent + cond kwargs);
 - ``validate_args(args)``: family-specific encode constraints.
 """
 
@@ -14,4 +15,8 @@ def get_encoder(family: str | None):
         from miles.rollout.encoder_hub import wan2_2
 
         return wan2_2
+    if family == "h3":
+        from miles.rollout.encoder_hub import h3
+
+        return h3
     raise ValueError(f"no encoder_hub entry for model family {family!r}")

@@ -253,6 +253,18 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 help="Samples per prompt sent in one rollout request (sub-batch of the group).",
             )
             parser.add_argument(
+                "--rollout-video-dtype",
+                type=str,
+                choices=["keep", "uint8"],
+                default="keep",
+                help=(
+                    "Dtype of the decoded video in rollout responses. 'keep' returns the "
+                    "engine's raw float tensor; 'uint8' quantises engine-side with the same "
+                    "formula the reward path applies, cutting the response body ~4x. Use "
+                    "'keep' for any consumer that needs the unquantised tensor."
+                ),
+            )
+            parser.add_argument(
                 "--diffusion-fps",
                 type=float,
                 default=None,
@@ -607,6 +619,17 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
             # --diffusion-height/--diffusion-width/--diffusion-output-num-frames. Encoded pairs are
             # cached next to the jsonl under .sft_cache/, one content-addressed file per sample.
             parser.add_argument("--sft-frame-stride", type=int, default=1, help="SFT encode temporal stride")
+            parser.add_argument(
+                "--log-loss-sigma-bucket",
+                type=int,
+                default=10,
+                help="number of sigma buckets for per-bucket loss curves (0 disables; emitted by the SFT loss today)",
+            )
+            parser.add_argument(
+                "--sft-offload-encoder",
+                action="store_true",
+                help="keep the frozen encoder in host RAM, on the GPU only during encode bursts",
+            )
             parser.add_argument(
                 "--sft-encoder-checkpoint",
                 type=str,
@@ -1238,6 +1261,18 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 "engines fed when trajectory tensors are large.",
             )
             parser.add_argument(
+                "--rollout-fetch-in-parser",
+                action="store_true",
+                default=False,
+                help=(
+                    "Parser actors pick a least-loaded engine via the miles router, fetch the "
+                    "rollout response straight from it and parse it in place, so bodies skip "
+                    "both the router's data plane and the manager's event loop. Requires "
+                    "--use-miles-router and at least as many parser workers as concurrency "
+                    "slots, since a fetch occupies its actor for the whole generation."
+                ),
+            )
+            parser.add_argument(
                 "--pickscore-num-gpus-per-worker",
                 type=float,
                 default=1.0,
@@ -1274,6 +1309,37 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 type=str,
                 default=None,
                 help="Hugging Face model path for PickScore. Required when --rm-type pickscore.",
+            )
+            parser.add_argument(
+                "--hps-num-workers",
+                type=int,
+                default=1,
+                help="Number of Ray HPS actors used when --rm-type hps.",
+            )
+            parser.add_argument(
+                "--hps-num-gpus-per-worker",
+                type=float,
+                default=1.0,
+                help="GPU resources per HPS actor when reward is not colocated.",
+            )
+            parser.add_argument(
+                "--hps-batch-size",
+                type=int,
+                default=8,
+                help="Batch size per HPS actor call.",
+            )
+            parser.add_argument(
+                "--hps-version",
+                type=str,
+                default="v2.1",
+                choices=["v2.0", "v2.1"],
+                help="HPS checkpoint version used when --rm-type hps.",
+            )
+            parser.add_argument(
+                "--hps-checkpoint-path",
+                type=str,
+                default=None,
+                help="Optional local HPS checkpoint path; otherwise download it from Hugging Face.",
             )
 
             parser.add_argument(
@@ -1460,6 +1526,17 @@ def miles_validate_args(args):
 
     if args.save_interval is not None:
         assert args.save is not None, "'--save' is required when save_interval is set."
+
+    if args.rollout_fetch_in_parser and not args.use_miles_router:
+        raise ValueError("--rollout-fetch-in-parser requires --use-miles-router for its pick/ack endpoints")
+
+    if args.rollout_fetch_in_parser and args.rollout_num_gpus:
+        slots = args.sglang_server_concurrency * args.rollout_num_gpus // args.rollout_num_gpus_per_engine
+        if args.rollout_parser_num_workers < slots:
+            raise ValueError(
+                f"--rollout-fetch-in-parser needs --rollout-parser-num-workers >= the "
+                f"{slots} concurrency slots, got {args.rollout_parser_num_workers}"
+            )
 
     if (args.micro_batch_size_sample is None) != (args.micro_batch_size_tstep is None):
         raise ValueError("--micro-batch-size-sample and --micro-batch-size-tstep must be set together")
@@ -1679,12 +1756,23 @@ def miles_validate_args(args):
     if args.offload_rollout is None:
         args.offload_rollout = False
 
+    if args.hps_num_workers <= 0:
+        raise ValueError(f"--hps-num-workers must be positive, got {args.hps_num_workers}")
+    if args.hps_batch_size <= 0:
+        raise ValueError(f"--hps-batch-size must be positive, got {args.hps_batch_size}")
+    if args.hps_num_gpus_per_worker < 0:
+        raise ValueError(f"--hps-num-gpus-per-worker must be non-negative, got {args.hps_num_gpus_per_worker}")
+
     if args.colocate_reward:
         assert args.colocate, "--colocate-reward requires --colocate."
-        assert args.pickscore_num_workers <= args.rollout_num_gpus, (
-            f"--colocate-reward requires pickscore_num_workers ({args.pickscore_num_workers}) "
-            f"<= rollout_num_gpus ({args.rollout_num_gpus}): the placement group has one bundle per GPU."
-        )
+        for rm_name, num_workers in (
+            ("pickscore", args.pickscore_num_workers),
+            ("hps", args.hps_num_workers),
+        ):
+            assert num_workers <= args.rollout_num_gpus, (
+                f"--colocate-reward requires {rm_name}_num_workers ({num_workers}) "
+                f"<= rollout_num_gpus ({args.rollout_num_gpus}): the placement group has one bundle per GPU."
+            )
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path
