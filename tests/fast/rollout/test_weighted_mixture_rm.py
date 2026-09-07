@@ -61,3 +61,14 @@ async def test_missing_reward_key_is_rejected_before_scoring(monkeypatch):
     with pytest.raises(ValueError, match="--reward-key weighted"):
         await weighted_mixture_rm(Namespace(custom_rm_args="hps=0.7,pickscore=0.3", reward_key=None), [object()])
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_wrong_score_count_is_rejected_instead_of_dropping_samples(monkeypatch):
+    async def wrong_length(args, samples):
+        return [0.1, 0.2, 0.3]
+
+    monkeypatch.setattr(weighted_mixture_rm_module, "_REWARDS", {"hps": wrong_length})
+    args = Namespace(custom_rm_args="hps=1", reward_key="weighted")
+    with pytest.raises(ValueError, match="returned 3 scores for 2 samples"):
+        await weighted_mixture_rm_module.weighted_mixture_rm(args, [object(), object()])

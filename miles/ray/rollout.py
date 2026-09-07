@@ -54,6 +54,12 @@ class RolloutManager:
         logger.info("RolloutManager init start")
         self.args = args
         self.pg = pg
+        if getattr(args, "api_rm_config", None):
+            from miles.rollout.rm_hub.api_utils import validate_api_rm_config
+
+            # The submitting shell's env need not be the Ray worker's env.
+            # Check here before starting the router or any GPU engines.
+            validate_api_rm_config(args)
         from miles.dashboard import hooks
 
         hooks.register_rollout_manager(args)
@@ -148,6 +154,11 @@ class RolloutManager:
     def dispose(self):
         from miles.dashboard import hooks
 
+        if getattr(self.args, "api_rm_config", None):
+            from miles.rollout.rm_hub.api import close_api_rm_clients
+            from miles.utils.async_utils import run
+
+            run(close_api_rm_clients())
         hooks.detach_and_flush()
         if self._metric_checker is not None:
             self._metric_checker.dispose()

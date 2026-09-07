@@ -1221,7 +1221,15 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 "--rm-type",
                 type=str,
                 default=None,
-                help="Built-in reward model (pickscore / hps / ocr). Ignored when --custom-rm-path is set.",
+                help="Built-in reward (pickscore / hps / ocr) or a name from --api-rm-config. "
+                "Ignored when --custom-rm-path is set.",
+            )
+            parser.add_argument(
+                "--api-rm-config",
+                type=str,
+                default=None,
+                help="YAML mapping of API reward names to model, base_url, api_key_env, and optional prompt_path, "
+                "score_min/score_max, timeout_s, max_concurrency. Images only; failures stop the job.",
             )
             parser.add_argument(
                 "--reward-key",
@@ -1814,6 +1822,11 @@ def miles_validate_args(args):
         )
     if args.custom_rm_args is not None and args.custom_rm_path is None:
         raise ValueError("--custom-rm-args requires --custom-rm-path.")
+
+    if getattr(args, "api_rm_config", None):
+        from miles.rollout.rm_hub.api_utils import validate_api_rm_config
+
+        validate_api_rm_config(args)
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path

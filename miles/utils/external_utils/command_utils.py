@@ -2,11 +2,13 @@
 This file is not for miles framework itself, but as an optional utility to easily launch miles jobs and tests.
 """
 
+import argparse
 import datetime
 import json
 import os
 import random
 import shlex
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,6 +68,7 @@ def execute_train(
     """
     if config is None:
         config = ExecuteTrainConfig()
+    api_env_vars = _api_rm_env_vars(train_args)
     if not os.path.isabs(train_script):
         train_script = f"{repo_base_dir}/{train_script}"
     external_ray = get_bool_env_var("MILES_SCRIPT_EXTERNAL_RAY")
@@ -126,19 +129,34 @@ def execute_train(
         ),
         **(extra_env_vars or {}),
         **_parse_extra_env_vars(config.extra_env_vars),
+        **api_env_vars,
     }
     runtime_env_vars["PYTHONPATH"] = _pythonpath_with_sources(runtime_env_vars.get("PYTHONPATH"))
-    runtime_env_json = json.dumps({"env_vars": runtime_env_vars})
-
     if not get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
         return
 
-    exec_command(
-        "export no_proxy=127.0.0.1 && export PYTHONUNBUFFERED=1 && "
-        f"""ray job submit {'' if 'RAY_ADDRESS' in os.environ else '--address="http://127.0.0.1:8265" '}"""
-        f"--runtime-env-json={shlex.quote(runtime_env_json)} "
-        f"-- python3 {shlex.quote(train_script)} {train_args}"
-    )
+    # exec_command logs its command. Keep credentials out of the command line;
+    # NamedTemporaryFile is mode 0600 and is removed after submission finishes.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as runtime_env_file:
+        json.dump({"env_vars": runtime_env_vars}, runtime_env_file)
+        runtime_env_file.flush()
+        exec_command(
+            "export no_proxy=127.0.0.1 && export PYTHONUNBUFFERED=1 && "
+            f"""ray job submit {'' if 'RAY_ADDRESS' in os.environ else '--address="http://127.0.0.1:8265" '}"""
+            f"--runtime-env={shlex.quote(runtime_env_file.name)} "
+            f"-- python3 {shlex.quote(train_script)} {train_args}"
+        )
+
+
+def _api_rm_env_vars(train_args: str) -> dict[str, str]:
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--api-rm-config")
+    args, _ = parser.parse_known_args(shlex.split(train_args))
+    if not args.api_rm_config:
+        return {}
+    from miles.rollout.rm_hub.api_utils import api_rm_env, load_api_rm_configs
+
+    return api_rm_env(load_api_rm_configs(args.api_rm_config))
 
 
 def _pythonpath_with_sources(*additional_pythonpaths: str | None) -> str:
