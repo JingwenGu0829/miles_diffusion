@@ -194,6 +194,7 @@ See [Dtype Control](../advanced/dtype-control.md).
 | `--update-weight-target-module` | str | `transformer` | Modules to train and sync. Wan2.2: `transformer,transformer_2`. |
 | `--update-weight-buffer-size` | int | 512 MiB | Weight-sync chunk size in bytes. |
 | `--rollout-seed` | int | `42` | |
+| `--rollout-shuffle` | flag | off | Shuffle the prompt order once per epoch (seeded by `--rollout-seed`). Off reads the jsonl in file order. |
 | `--over-sampling-batch-size` | int | – | Must equal `--rollout-batch-size` today. |
 | `--sglang-server-concurrency` | int | `512` | Per-engine in-flight request cap. |
 | `--use-distributed-post` | flag | off | Rollout HTTP POSTs go through per-node Ray actors instead of the local client (`MILES_HTTP_POST_ACTORS_PER_NODE` sets the count). |

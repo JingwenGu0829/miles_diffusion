@@ -421,6 +421,12 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                     "This is used to shuffle the prompts and also for the random sampling of the prompts."
                 ),
             )
+            parser.add_argument(
+                "--rollout-shuffle",
+                action="store_true",
+                default=False,
+                help="Shuffle the prompt order once per epoch, seeded by --rollout-seed; off reads the jsonl in file order.",
+            )
 
             # sampling
             parser.add_argument(
