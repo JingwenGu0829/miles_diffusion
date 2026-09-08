@@ -106,7 +106,7 @@ def get_api_rm_configs(args) -> dict[str, ApiRewardConfig]:
     # Resolved prompts/configs may travel with args to Ray; credentials never do.
     configs = getattr(args, "_api_rm_configs", None)
     if configs is None:
-        path = getattr(args, "api_rm_config", None)
+        path = args.api_rm_config
         if not path:
             return {}
         configs = {name: config.model_dump() for name, config in load_api_rm_configs(path).items()}
@@ -130,10 +130,10 @@ def validate_api_rm_config(args) -> None:
 
 def _encode_image(sample: Sample) -> str:
     output = sample.generated_output
-    if not isinstance(output, torch.Tensor) or output.ndim != 4 or tuple(output.shape[:2]) != (3, 1):
+    if output is None or tuple(output.shape[:2]) != (3, 1):
         raise ValueError("API rewards require one RGB image per sample ([3, 1, H, W]); video/audio are not supported")
-    if output.numel() == 0 or not torch.isfinite(output).all():
-        raise ValueError("API reward image must be non-empty and contain only finite pixel values")
+    if not torch.isfinite(output).all():
+        raise ValueError("API reward image must contain only finite pixel values")
     (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
     buffer = io.BytesIO()
     Image.fromarray(frame).save(buffer, format="PNG")

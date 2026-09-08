@@ -1823,7 +1823,7 @@ def miles_validate_args(args):
     if args.custom_rm_args is not None and args.custom_rm_path is None:
         raise ValueError("--custom-rm-args requires --custom-rm-path.")
 
-    if getattr(args, "api_rm_config", None):
+    if args.api_rm_config:
         from miles.rollout.rm_hub.api_utils import validate_api_rm_config
 
         validate_api_rm_config(args)

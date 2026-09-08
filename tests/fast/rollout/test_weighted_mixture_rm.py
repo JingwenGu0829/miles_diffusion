@@ -39,7 +39,7 @@ async def test_each_sample_gets_its_components_and_the_weighted_sum(monkeypatch)
     """Fanning the batch out per sample, dropping a weight, or collapsing to a scalar would all show here."""
     calls = []
     monkeypatch.setattr(weighted_mixture_rm_module, "_REWARDS", _fake_rewards(calls))
-    args = Namespace(custom_rm_args="hps=0.7,pickscore=0.3", reward_key="weighted")
+    args = Namespace(api_rm_config=None, custom_rm_args="hps=0.7,pickscore=0.3", reward_key="weighted")
 
     rewards = await weighted_mixture_rm(args, [object(), object()])
 
@@ -59,7 +59,9 @@ async def test_missing_reward_key_is_rejected_before_scoring(monkeypatch):
     monkeypatch.setattr(weighted_mixture_rm_module, "_REWARDS", _fake_rewards(calls))
 
     with pytest.raises(ValueError, match="--reward-key weighted"):
-        await weighted_mixture_rm(Namespace(custom_rm_args="hps=0.7,pickscore=0.3", reward_key=None), [object()])
+        await weighted_mixture_rm(
+            Namespace(api_rm_config=None, custom_rm_args="hps=0.7,pickscore=0.3", reward_key=None), [object()]
+        )
     assert calls == []
 
 
@@ -69,6 +71,6 @@ async def test_wrong_score_count_is_rejected_instead_of_dropping_samples(monkeyp
         return [0.1, 0.2, 0.3]
 
     monkeypatch.setattr(weighted_mixture_rm_module, "_REWARDS", {"hps": wrong_length})
-    args = Namespace(custom_rm_args="hps=1", reward_key="weighted")
+    args = Namespace(api_rm_config=None, custom_rm_args="hps=1", reward_key="weighted")
     with pytest.raises(ValueError, match="returned 3 scores for 2 samples"):
         await weighted_mixture_rm_module.weighted_mixture_rm(args, [object(), object()])

@@ -54,7 +54,7 @@ class RolloutManager:
         logger.info("RolloutManager init start")
         self.args = args
         self.pg = pg
-        if getattr(args, "api_rm_config", None):
+        if args.api_rm_config:
             from miles.rollout.rm_hub.api_utils import validate_api_rm_config
 
             # The submitting shell's env need not be the Ray worker's env.
@@ -154,7 +154,7 @@ class RolloutManager:
     def dispose(self):
         from miles.dashboard import hooks
 
-        if getattr(self.args, "api_rm_config", None):
+        if self.args.api_rm_config:
             from miles.rollout.rm_hub.api import close_api_rm_clients
             from miles.utils.async_utils import run
 
