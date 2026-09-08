@@ -104,6 +104,7 @@ All recipes are Python modules under `scripts/`. Each exposes a Typer CLI
 |---|---|---|---|
 | `run_diffusion_grpo_sd3_ocr_sglang.py` | OCR (CPU) | 2 colocate | Flow-GRPO |
 | `run_diffusion_grpo_sd3_hps_sglang.py` | HPS | 2 colocate | Flow-GRPO |
+| `run_diffusion_grpo_sd3_ocr_pickscore_sglang.py` | 0.8 OCR + 0.2 PickScore | 2 colocate | Flow-GRPO |
 | `run_diffusion_nft_sd3_pickscore.py` | PickScore | 3 (2+1) | DiffusionNFT |
 
 ### 5.2 Flow-GRPO + OCR (2 GPU colocate)
@@ -122,8 +123,6 @@ Walkthrough: [Quick Start](../../getting-started/quick-start.md).
 
 E2E test: `tests/e2e/short/test_sd3_ocr_grpo_2xGPU.py`.
 
-Mixing PickScore into this recipe (0.8 OCR + 0.2 PickScore) is validated in
-[Rewards](../../user-guide/rewards.md#validated-mixture-sd35-ocr-08--pickscore-02).
 
 ### 5.3 Flow-GRPO + HPS (2 GPU colocate)
 
@@ -145,7 +144,28 @@ HPS reward actor with the train and rollout workers. It keeps Flow-GRPO's own KL
 (`--diffusion-kl-beta 0.01`) and group-wise advantage std instead of the OCR recipe's
 `--diffusion-kl-beta 0.04 --globalize-reward-std`.
 
-### 5.4 DiffusionNFT + PickScore (3 GPU)
+### 5.4 Flow-GRPO + OCR & PickScore (2 GPU colocate)
+
+Script: `scripts/run_diffusion_grpo_sd3_ocr_pickscore_sglang.py`
+
+**Status:** [📈 V — Verified](../../user-guide/recipe-verification.md#v) — 600 rollouts
+(2 optimizer steps each) on 2×H200: `ocr_mean` 0.34 → 0.80, `pickscore_mean` 0.80 → 0.83,
+`weighted_mean` 0.43 → 0.81 (means of the last 100 rollouts; 10-rollout moving-average peaks
+0.88 / 0.85 / 0.87).
+
+```bash
+export HF_TOKEN=...
+python3 scripts/run_diffusion_grpo_sd3_ocr_pickscore_sglang.py \
+  --cuda-visible-devices 6,7
+```
+
+The OCR recipe with PickScore mixed in through `weighted_mixture_rm`
+(`--custom-rm-args ocr=0.8,pickscore=0.2 --reward-key weighted`, the weighting Stepwise-Flow-GRPO
+uses for its OCR task) and `--rollout-shuffle`; the PickScore actor is colocated next to the CPU
+OCR pool. Every other flag matches the OCR recipe. See [Rewards](../../user-guide/rewards.md)
+§ Combining rewards for how the mixture is wired.
+
+### 5.5 DiffusionNFT + PickScore (3 GPU)
 
 Script: `scripts/run_diffusion_nft_sd3_pickscore.py`
 
@@ -165,14 +185,14 @@ MILES_SCRIPT_SMOKE=1 python3 scripts/run_diffusion_nft_sd3_pickscore.py
 
 ### Recipe comparison
 
-| | GRPO + OCR | GRPO + HPS | NFT + PickScore |
-|---|---|---|---|
-| Script | `run_diffusion_grpo_sd3_ocr_sglang.py` | `run_diffusion_grpo_sd3_hps_sglang.py` | `run_diffusion_nft_sd3_pickscore.py` |
-| `--loss-type` | `policy_loss` (default) | `policy_loss` (default) | `nft` |
-| SDE | Full window, noise=0.7, CFG=4.5 | Full window, noise=0.7, CFG=4.5 | ODE, noise=0 |
-| Reference | LoRA base KL (β 0.04) | LoRA base KL (β 0.01) | EMA (`--use-ema`) |
-| Reward placement | CPU OCR | Colocated HPS actor | Dedicated PickScore GPU |
-| Verification | FG | V | FG |
+| | GRPO + OCR | GRPO + HPS | GRPO + OCR & PickScore | NFT + PickScore |
+|---|---|---|---|---|
+| Script | `run_diffusion_grpo_sd3_ocr_sglang.py` | `run_diffusion_grpo_sd3_hps_sglang.py` | `run_diffusion_grpo_sd3_ocr_pickscore_sglang.py` | `run_diffusion_nft_sd3_pickscore.py` |
+| `--loss-type` | `policy_loss` (default) | `policy_loss` (default) | `policy_loss` (default) | `nft` |
+| SDE | Full window, noise=0.7, CFG=4.5 | Full window, noise=0.7, CFG=4.5 | Full window, noise=0.7, CFG=4.5 | ODE, noise=0 |
+| Reference | LoRA base KL (β 0.04) | LoRA base KL (β 0.01) | LoRA base KL (β 0.04) | EMA (`--use-ema`) |
+| Reward placement | CPU OCR | Colocated HPS actor | CPU OCR + colocated PickScore actor | Dedicated PickScore GPU |
+| Verification | FG | V | V | FG |
 
 ## 6. Recipe configuration
 
@@ -279,6 +299,17 @@ acceptance range:
 ![Flow-GRPO OCR raw reward](../../assets/images/sd3/grpo-ocr-raw-reward.png)
 
 Online runs: wandb project **`miles-diffusion-grpo`**.
+
+### Flow-GRPO + OCR & PickScore
+
+Observed rewards from one `scripts/run_diffusion_grpo_sd3_ocr_pickscore_sglang.py` run (600 rollouts);
+the weighted sum GRPO trains on, then its two components:
+
+![Flow-GRPO OCR + PickScore weighted reward](../../assets/images/sd3/grpo-ocr-pickscore-weighted-reward.png)
+
+![Flow-GRPO OCR + PickScore: OCR component](../../assets/images/sd3/grpo-ocr-pickscore-ocr-reward.png)
+
+![Flow-GRPO OCR + PickScore: PickScore component](../../assets/images/sd3/grpo-ocr-pickscore-pickscore-reward.png)
 
 ### DiffusionNFT + PickScore
 
