@@ -58,6 +58,8 @@ class RolloutDataSource(DataSource):
                 metadata_key=args.metadata_key,
                 seed=args.rollout_seed,
             )
+            if args.rollout_shuffle:
+                self.dataset.shuffle(self.epoch_id)
         else:
             self.dataset = None
 
@@ -71,6 +73,8 @@ class RolloutDataSource(DataSource):
                 prompt_samples = self.dataset.samples[self.sample_offset :]
                 num_samples -= len(prompt_samples)
                 self.epoch_id += 1
+                if self.args.rollout_shuffle:
+                    self.dataset.shuffle(self.epoch_id)
                 prompt_samples += self.dataset.samples[:num_samples]
                 self.sample_offset = num_samples
         else:
@@ -124,6 +128,9 @@ class RolloutDataSource(DataSource):
         self.sample_group_index = state_dict.get("sample_group_index", 0)
         self.sample_index = state_dict.get("sample_index", 0)
         self.metadata = state_dict.get("metadata", {})
+        # the permutation is a function of (seed, epoch), so restoring epoch_id restores the order
+        if self.args.rollout_shuffle:
+            self.dataset.shuffle(self.epoch_id)
 
 
 class RolloutDataSourceWithBuffer(RolloutDataSource):

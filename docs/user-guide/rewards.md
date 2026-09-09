@@ -232,6 +232,11 @@ pick them with the scales in mind. Colocated pools share one slot ledger, so sev
 can colocate without overlapping. Rewards receive `generated_output` itself, and every reward actor
 quantises it to uint8 on its own terms.
 
+A shipped recipe uses it: `scripts/run_diffusion_grpo_sd3_ocr_pickscore_sglang.py` trains SD3.5 on
+0.8 OCR + 0.2 PickScore with `--rollout-shuffle`; see [SD3](../models/sd3/sd3.md) § 5.4 for the
+curve and numbers. Shuffling matters more than usual there: with 8 prompts per rollout one hard
+batch moves the per-rollout mean visibly.
+
 Using the `gemini` configuration from [API rewards](#api-rewards),
 add these reward arguments to a colocated image training recipe:
 
@@ -328,7 +333,8 @@ Override that path with `--custom-reward-post-process-path` — see
 
 ### JSONL format
 
-Training prompts are loaded from `.jsonl` files via `miles/utils/diffusion_data.py`:
+Training prompts are loaded from `.jsonl` files via `miles/utils/diffusion_data.py` and read in
+file order; `--rollout-shuffle` permutes them once per epoch (seeded by `--rollout-seed`):
 
 ```json
 {"input": "A photo of a cat wearing sunglasses"}
