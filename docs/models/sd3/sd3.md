@@ -51,7 +51,7 @@ Prompt datasets live under
 | Recipe | Subset | Train path |
 |---|---|---|
 | GRPO + OCR | `flowgrpo_ocr` | `.../flowgrpo_ocr/train.jsonl` |
-| GRPO + HPS | `hpdv2` | `.../hpdv2/train.jsonl` |
+| GRPO + HPS / HPS & Gemini API | `hpdv2` | `.../hpdv2/train.jsonl` |
 | NFT + PickScore | `flowgrpo_pickscore` | `.../flowgrpo_pickscore/train.jsonl` |
 
 Launch scripts download the matching subset automatically via
@@ -104,6 +104,7 @@ All recipes are Python modules under `scripts/`. Each exposes a Typer CLI
 |---|---|---|---|
 | `run_diffusion_grpo_sd3_ocr_sglang.py` | OCR (CPU) | 2 colocate | Flow-GRPO |
 | `run_diffusion_grpo_sd3_hps_sglang.py` | HPS | 2 colocate | Flow-GRPO |
+| `run_diffusion_grpo_sd3_hps_gemini_sglang.py` | 0.7 HPS + 0.3 Gemini API | 2 colocate | Flow-GRPO |
 | `run_diffusion_grpo_sd3_ocr_pickscore_sglang.py` | 0.8 OCR + 0.2 PickScore | 2 colocate | Flow-GRPO |
 | `run_diffusion_nft_sd3_pickscore.py` | PickScore | 3 (2+1) | DiffusionNFT |
 
@@ -193,6 +194,38 @@ MILES_SCRIPT_SMOKE=1 python3 scripts/run_diffusion_nft_sd3_pickscore.py
 | Reference | LoRA base KL (β 0.04) | LoRA base KL (β 0.01) | LoRA base KL (β 0.04) | EMA (`--use-ema`) |
 | Reward placement | CPU OCR | Colocated HPS actor | CPU OCR + colocated PickScore actor | Dedicated PickScore GPU |
 | Verification | FG | V | V | FG |
+
+### 5.6 Flow-GRPO + HPS & Gemini API (2 GPU colocate)
+
+Script: `scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py`
+
+**Status:** [○ NV — Not verified](../../user-guide/recipe-verification.md#nv).
+No complete training curve has been run for this recipe.
+
+```bash
+export HF_TOKEN=...
+export GEMINI_API_KEY=...
+python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py \
+  --cuda-visible-devices 0,1 \
+  --num-rollout 50
+```
+
+This recipe adds `0.7 HPS + 0.3 Gemini API` to the HPS recipe's `hpdv2` prompts,
+LoRA, SDE, and training settings. HPS shares a rollout GPU; the API reward uses no
+local GPU slot. The mixture weights illustrate the integration and have not
+been tuned.
+
+The default API configuration is `scripts/reward_configs/gemini.yaml`. Set the
+`model` field to a Gemini model available to your account, or pass
+`--api-rm-config /path/to/rewards.yaml` with a `gemini` alias. The recipe uses
+`--reward-key weighted` to train on the sum and logs both components.
+See [Rewards](../../user-guide/rewards.md) for the shared OpenAI/Gemini API
+contract and configuration fields.
+
+With the default batch sizes, each rollout generates 128 samples and performs
+two optimizer steps: `--num-rollout 50` runs 100 optimizer steps and makes 6,400
+API scoring requests, excluding any extra evaluation. Set `WANDB_API_KEY` to
+enable the recipe's W&B logging.
 
 ## 6. Recipe configuration
 

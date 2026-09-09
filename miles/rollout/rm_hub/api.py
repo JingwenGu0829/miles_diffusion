@@ -1,15 +1,7 @@
-"""Image rewards over the OpenAI-compatible Chat Completions API.
+"""OpenAI/Gemini image rewards over the OpenAI-compatible Chat Completions API.
 
-``--api-rm-config`` is a YAML mapping of reward names to configurations, e.g.::
-
-    gemini:
-      model: your-vision-model
-      base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-      api_key_env: GEMINI_API_KEY
-
-Use ``--rm-type gemini`` or include ``gemini=0.3`` in the weighted-mixture example.
-Optional fields: prompt_path (relative to this YAML), score_min, score_max,
-timeout_s, and max_concurrency. Requests are never retried or replaced by zero.
+Select an alias from --api-rm-config with --rm-type or weighted_mixture_rm.
+Configuration and examples: docs/user-guide/rewards.md.
 """
 
 from __future__ import annotations
@@ -23,8 +15,7 @@ from miles.utils.types import Sample
 from .api_utils import ApiRewardClient, get_api_rm_configs
 
 
-# Each loop owns its clients and semaphores. The rollout manager reuses one loop
-# across microgroups/rollouts; tests or custom callers can use independent loops.
+# Reuse clients and concurrency limits across microgroups on the same event loop.
 _clients: WeakKeyDictionary = WeakKeyDictionary()
 
 

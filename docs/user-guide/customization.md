@@ -140,9 +140,9 @@ Shipped custom RMs:
 
 | Path | What |
 |---|---|
-| `miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm` | Weighted sum of local rewards (`hps`, `pickscore`, `ocr`) and aliases from `--api-rm-config`; e.g. `--custom-rm-args "hps=0.7,gemini=0.3"`; returns a dict per sample, train on it with `--reward-key weighted`. See [Rewards](rewards.md) § Combining rewards. |
+| `miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm` | Weighted sum of local rewards (`hps`, `pickscore`, `ocr`) and aliases from `--api-rm-config`; e.g. `--custom-rm-args "hps=0.7,judge=0.3"`; returns a dict per sample, train on it with `--reward-key weighted`. See [Rewards](rewards.md) § Combining rewards. |
 
-For OpenAI or Gemini image judging, use the shared API RM with
+For OpenAI/Gemini image judging, use the shared API RM with
 `--api-rm-config` and `--rm-type <alias>`. See [API rewards](rewards.md#api-rewards)
 for configuration and [Combining rewards](rewards.md#combining-rewards) for an
 example that mixes it with local scorers.

@@ -3,12 +3,12 @@
     --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \\
     --custom-rm-args "hps=0.7,pickscore=0.3" --reward-key weighted
 
-To include an API reward, configure the ``gemini`` alias in ``rewards.yaml``
+To include an API reward, configure the ``judge`` alias in ``rewards.yaml``
 (see ``docs/user-guide/rewards.md``), then use:
 
     --api-rm-config rewards.yaml \\
     --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \\
-    --custom-rm-args "hps=0.7,gemini=0.3" --reward-key weighted
+    --custom-rm-args "hps=0.7,judge=0.3" --reward-key weighted
 
 Each sample's reward is a dict holding every component plus ``"weighted"``, so each reward
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains

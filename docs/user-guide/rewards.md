@@ -107,22 +107,37 @@ Example from `scripts/run_diffusion_grpo_sd3_hps_sglang.py`:
 ### API rewards
 
 Implementation: `miles/rollout/rm_hub/api.py`, with shared request and parsing
-utilities in `api_utils.py`. Both providers use the OpenAI-compatible Chat
-Completions API. Each request includes the generation prompt and one RGB image
-from `sample.generated_output`, encoded as a PNG data URL. This integration
+utilities in `api_utils.py`. OpenAI/Gemini API rewards use the OpenAI-compatible
+Chat Completions API. Each request includes the generation prompt and one RGB
+image from `sample.generated_output`, encoded as a PNG data URL. This integration
 currently supports images only; video and audio outputs are rejected.
 
-For Gemini, set the key in the shell that launches training:
+Set your provider's key in the shell that launches training, then save one of
+the following configurations as `rewards.yaml`. Replace the model placeholder
+with an image-capable model ID/version available to your account.
+
+**OpenAI:**
+
+```bash
+export OPENAI_API_KEY="your-key"
+```
+
+```yaml
+judge:
+  model: YOUR_OPENAI_VISION_MODEL
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+```
+
+**Gemini:**
 
 ```bash
 export GEMINI_API_KEY="your-key"
 ```
 
-Save the following as `rewards.yaml`:
-
 ```yaml
-gemini:
-  model: gemini-3.8-flash
+judge:
+  model: YOUR_GEMINI_VISION_MODEL
   base_url: https://generativelanguage.googleapis.com/v1beta/openai/
   api_key_env: GEMINI_API_KEY
 ```
@@ -132,29 +147,18 @@ reward selection:
 
 ```bash
 --api-rm-config rewards.yaml \
---rm-type gemini
+--rm-type judge
 ```
 
-The top-level name `gemini` is an alias chosen by the user. `model` is the
+The top-level name `judge` is an alias chosen by the user. `model` is the
 provider's model ID/version, `base_url` is the API endpoint, and `api_key_env`
-names the environment variable containing the key. Changing the model does not
-require changing the alias or implementation. The configuration stores the
-environment variable's name, not the key itself.
+names the environment variable containing the key. These fields are independent
+of the alias. The configuration stores the environment variable's name, not the
+key itself.
 
-For OpenAI, set `OPENAI_API_KEY` and use this configuration instead, replacing
-the model placeholder with an image-capable model available to your account:
-
-```yaml
-openai:
-  model: YOUR_OPENAI_VISION_MODEL
-  base_url: https://api.openai.com/v1
-  api_key_env: OPENAI_API_KEY
-```
-
-Select it with `--api-rm-config rewards.yaml --rm-type openai`. A YAML file can
-define multiple aliases, including different models or rubrics at the same
-endpoint. Every entry in the file requires its named key to be set, so include
-only configurations for which credentials are available.
+A YAML file can define multiple aliases, including different models or rubrics
+at the same endpoint. Every entry in the file requires its named key to be set,
+so include only configurations for which credentials are available.
 
 The launcher helper `execute_train` forwards these named environment variables
 to Ray's runtime environment. If submitting a Ray job yourself, include them in
@@ -237,13 +241,13 @@ A shipped recipe uses it: `scripts/run_diffusion_grpo_sd3_ocr_pickscore_sglang.p
 curve and numbers. Shuffling matters more than usual there: with 8 prompts per rollout one hard
 batch moves the per-rollout mean visibly.
 
-Using the `gemini` configuration from [API rewards](#api-rewards),
+Using the `judge` configuration from [API rewards](#api-rewards),
 add these reward arguments to a colocated image training recipe:
 
 ```bash
 --api-rm-config rewards.yaml \
 --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \
---custom-rm-args "hps=0.7,gemini=0.3" \
+--custom-rm-args "hps=0.7,judge=0.3" \
 --reward-key weighted \
 --hps-version v2.1 \
 --hps-reward-colocate
@@ -260,7 +264,7 @@ For each sample, this function returns a dictionary such as:
 ```python
 {
     "hps": 0.3,
-    "gemini": 3.0,
+    "judge": 3.0,
     "weighted": 1.11,  # 0.7 * 0.3 + 0.3 * 3.0
 }
 ```
@@ -281,6 +285,11 @@ The mixture applies the same raw weighted sum to API scores (default range
 [0, 4]) and local scores. Existing advantage normalization is unchanged.
 Results are matched to input samples in input order, regardless of request
 completion order. A failure in any required component fails the job.
+
+For a complete Gemini example, use
+`scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py` with its accompanying YAML
+configuration. See [SD3](../models/sd3/sd3.md) § 5.6 for launch instructions and
+verification status.
 
 ### OCR (`--rm-type ocr`)
 
