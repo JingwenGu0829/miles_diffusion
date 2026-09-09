@@ -154,7 +154,7 @@ def _api_rm_env_vars(train_args: str) -> dict[str, str]:
     args, _ = parser.parse_known_args(shlex.split(train_args))
     if not args.api_rm_config:
         return {}
-    from miles.rollout.rm_hub.api_utils import api_rm_env, load_api_rm_configs
+    from miles.rollout.rm_hub.api import api_rm_env, load_api_rm_configs
 
     return api_rm_env(load_api_rm_configs(args.api_rm_config))
 

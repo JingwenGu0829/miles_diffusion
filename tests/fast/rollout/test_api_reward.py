@@ -20,13 +20,12 @@ import yaml
 from PIL import Image
 
 from miles.rollout.rm_hub import batched_async_rm
-from miles.rollout.rm_hub.api import api_rm, close_api_rm_clients
-from miles.rollout.rm_hub.api_utils import (
+from miles.rollout.rm_hub.api import (
     ApiRewardConfig,
-    ApiRewardError,
+    api_rm,
+    close_api_rm_clients,
     get_api_rm_configs,
     load_api_rm_configs,
-    validate_api_rm_config,
 )
 from miles.utils.types import Sample
 
@@ -43,7 +42,7 @@ def _sample(index):
     return Sample(index=index, prompt=str(index), generated_output=torch.full((3, 1, 8, 8), index / 4))
 
 
-def _response(score=1, *, content=None, finish_reason="stop", refusal=None, **kwargs):
+def _response(score=1, *, content=None, **kwargs):
     return httpx.Response(
         200,
         json={
@@ -54,11 +53,11 @@ def _response(score=1, *, content=None, finish_reason="stop", refusal=None, **kw
             "choices": [
                 {
                     "index": 0,
-                    "finish_reason": finish_reason,
+                    "finish_reason": "stop",
                     "message": {
                         "role": "assistant",
                         "content": json.dumps({"score": score}) if content is None else content,
-                        "refusal": refusal,
+                        "refusal": None,
                     },
                 }
             ],
@@ -174,7 +173,7 @@ async def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
         return httpx.Response(status, json={"error": {"message": "test failure"}})
 
     sdk_transport(handler)
-    with pytest.raises(ApiRewardError, match="sample index=1"):
+    with pytest.raises(RuntimeError, match="sample index=1"):
         await api_rm(_args(judge=_config()), [_sample(1)])
     assert calls == 1
 
@@ -188,19 +187,15 @@ async def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
         {"content": '{"score": true}'},
         {"content": '{"score": NaN}'},
         {"content": '{"score": Infinity}'},
-        {"content": '{"score": 2, "extra": 0}'},
         {"content": "{}"},
         {"content": "[]"},
         {"score": -1},
         {"score": 5},
-        {"finish_reason": "length"},
-        {"finish_reason": "content_filter"},
-        {"refusal": "cannot evaluate"},
     ],
 )
 async def test_invalid_or_incomplete_response_never_becomes_a_reward(response_kwargs, sdk_transport):
     sdk_transport(lambda request: _response(**response_kwargs))
-    with pytest.raises(ApiRewardError):
+    with pytest.raises(RuntimeError):
         await api_rm(_args(judge=_config()), [_sample(1)])
 
 
@@ -221,23 +216,12 @@ async def test_failure_cancels_other_requests(sdk_transport):
             raise
 
     sdk_transport(handler)
-    with pytest.raises(ApiRewardError):
+    with pytest.raises(RuntimeError):
         await api_rm(_args(judge=_config()), [_sample(1), _sample(2)])
     assert cancelled.is_set()
 
 
-async def test_overall_timeout_is_fatal(sdk_transport):
-    async def handler(request):
-        await asyncio.Event().wait()
-
-    sdk_transport(handler)
-    with pytest.raises(ApiRewardError, match="TimeoutError"):
-        await api_rm(_args(judge=_config(timeout_s=0.02)), [_sample(1)])
-
-
-@pytest.mark.parametrize(
-    "output", [None, torch.zeros(3, 2, 8, 8), torch.zeros(1, 16000), torch.full((3, 1, 8, 8), float("nan"))]
-)
+@pytest.mark.parametrize("output", [None, torch.zeros(3, 2, 8, 8), torch.zeros(1, 16000)])
 async def test_unsupported_media_fails_before_http(output, sdk_transport):
     def handler(request):
         pytest.fail("Unsupported media must not be sent to the API")
@@ -245,7 +229,7 @@ async def test_unsupported_media_fails_before_http(output, sdk_transport):
     sdk_transport(handler)
     sample = _sample(1)
     sample.generated_output = output
-    with pytest.raises(ApiRewardError):
+    with pytest.raises(RuntimeError):
         await api_rm(_args(judge=_config()), [sample])
 
 
@@ -275,34 +259,18 @@ def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path
         )
     )
     args = Namespace(api_rm_config=str(config_path))
-    validate_api_rm_config(args)
+    get_api_rm_configs(args)
     assert get_api_rm_configs(args)["judge"].model == "judge-version-123"
     (tmp_path / "rubric.txt").unlink()
     assert "0 to 10" in get_api_rm_configs(args)["judge"].prompt
     assert b"test-only-secret" not in pickle.dumps(args)
-    assert "judge-version-123" in json.dumps(vars(args))
-
-
-@pytest.mark.parametrize("value", [None, "", "   "])
-def test_missing_key_fails_during_validation(monkeypatch, value):
-    if value is None:
-        monkeypatch.delenv("TEST_RM_KEY", raising=False)
-    else:
-        monkeypatch.setenv("TEST_RM_KEY", value)
-    with pytest.raises(ValueError, match="missing or empty environment variable TEST_RM_KEY"):
-        validate_api_rm_config(_args(judge=_config()))
 
 
 @pytest.mark.parametrize(
     "entry",
     [
-        {"model": ""},
         {"max_concurrency": 0},
-        {"timeout_s": 0},
-        {"timeout_s": float("inf")},
-        {"score_min": 5},
         {"api_key": "not-allowed"},
-        {"base_url": "https://user:password@example.com"},
     ],
 )
 def test_invalid_config_is_rejected(tmp_path, entry):

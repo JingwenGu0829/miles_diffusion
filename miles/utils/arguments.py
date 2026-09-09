@@ -1830,9 +1830,10 @@ def miles_validate_args(args):
         raise ValueError("--custom-rm-args requires --custom-rm-path.")
 
     if args.api_rm_config:
-        from miles.rollout.rm_hub.api_utils import validate_api_rm_config
+        from miles.rollout.rm_hub.api import load_api_rm_configs
 
-        validate_api_rm_config(args)
+        # Resolve prompt files before args cross the Ray process or node boundary.
+        args._api_rm_configs = load_api_rm_configs(args.api_rm_config)
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path

@@ -25,8 +25,7 @@ async def async_rm(args, sample: Sample, **kwargs):
 
         return (await hps_rm(args, [sample]))[0]
     else:
-        from .api import api_rm
-        from .api_utils import get_api_rm_configs
+        from .api import api_rm, get_api_rm_configs
 
         if rm_type in get_api_rm_configs(args):
             return (await api_rm(args, [sample], name=rm_type))[0]
@@ -70,8 +69,7 @@ async def batched_async_rm(
             from .ocr import ocr_rm
 
             return await ocr_rm(args, samples)
-        from .api import api_rm
-        from .api_utils import get_api_rm_configs
+        from .api import api_rm, get_api_rm_configs
 
         if len(set(rm_types)) == 1 and rm_types[0] in get_api_rm_configs(args):
             return await api_rm(args, samples, name=rm_types[0])

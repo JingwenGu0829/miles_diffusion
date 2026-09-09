@@ -24,8 +24,7 @@ from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
-from .api import api_rm
-from .api_utils import get_api_rm_configs
+from .api import api_rm, get_api_rm_configs
 from .hps import hps_rm
 from .ocr import ocr_rm
 from .pickscore import pickscore_rm

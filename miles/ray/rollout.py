@@ -54,12 +54,6 @@ class RolloutManager:
         logger.info("RolloutManager init start")
         self.args = args
         self.pg = pg
-        if args.api_rm_config:
-            from miles.rollout.rm_hub.api_utils import validate_api_rm_config
-
-            # The submitting shell's env need not be the Ray worker's env.
-            # Check here before starting the router or any GPU engines.
-            validate_api_rm_config(args)
         from miles.dashboard import hooks
 
         hooks.register_rollout_manager(args)

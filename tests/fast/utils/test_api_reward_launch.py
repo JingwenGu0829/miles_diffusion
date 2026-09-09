@@ -47,7 +47,7 @@ def test_submit_passes_configured_key_in_private_runtime_env_file(monkeypatch, t
 def test_missing_key_fails_before_any_cluster_commands(monkeypatch, tmp_path):
     monkeypatch.delenv("TEST_GEMINI_KEY", raising=False)
     monkeypatch.setattr(commands, "exec_command", lambda *a, **kw: pytest.fail("Must validate before cluster changes"))
-    with pytest.raises(ValueError, match="TEST_GEMINI_KEY"):
+    with pytest.raises(KeyError, match="TEST_GEMINI_KEY"):
         commands.execute_train(f"--api-rm-config={shlex.quote(str(_config(tmp_path)))}", 1)
 
 

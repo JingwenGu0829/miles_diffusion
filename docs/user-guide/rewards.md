@@ -106,8 +106,7 @@ Example from `scripts/run_diffusion_grpo_sd3_hps_sglang.py`:
 
 ### API rewards
 
-Implementation: `miles/rollout/rm_hub/api.py`, with shared request and parsing
-utilities in `api_utils.py`. OpenAI/Gemini API rewards use the OpenAI-compatible
+Implementation: `miles/rollout/rm_hub/api.py`. OpenAI/Gemini API rewards use the OpenAI-compatible
 Chat Completions API. Each request includes the generation prompt and one RGB
 image from `sample.generated_output`, encoded as a PNG data URL. This integration
 currently supports images only; video and audio outputs are rejected.
@@ -181,9 +180,9 @@ and within the configured range, then returns it as a float.
 | `base_url` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
 | `api_key_env` | Required | Environment variable containing the API key |
 | `prompt` / `prompt_path` | Built-in prompt-adherence rubric | Inline rubric or a text file relative to the YAML; set at most one |
-| `score_min` / `score_max` | `0` / `4` | Accepted score range; changing it requires a custom rubric |
+| `score_min` / `score_max` | `0` / `4` | Accepted score range |
 | `timeout_s` | `60` | Request deadline in seconds |
-| `max_concurrency` | `8` | Concurrent requests per configured reward in each worker event loop, shared across microgroups |
+| `max_concurrency` | `8` | Concurrent requests per configured reward, shared across microgroups |
 
 For a custom rubric, add `prompt_path: rubric.txt` to the alias's configuration.
 The rubric should request the same JSON `score` field and describe the score
