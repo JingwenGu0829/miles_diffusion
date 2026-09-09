@@ -68,7 +68,7 @@ def execute_train(
     """
     if config is None:
         config = ExecuteTrainConfig()
-    api_env_vars = _api_rm_env_vars(train_args)
+    api_rm_env_vars = _api_rm_env_vars(train_args)
     if not os.path.isabs(train_script):
         train_script = f"{repo_base_dir}/{train_script}"
     external_ray = get_bool_env_var("MILES_SCRIPT_EXTERNAL_RAY")
@@ -129,14 +129,14 @@ def execute_train(
         ),
         **(extra_env_vars or {}),
         **_parse_extra_env_vars(config.extra_env_vars),
-        **api_env_vars,
+        **api_rm_env_vars,
     }
     runtime_env_vars["PYTHONPATH"] = _pythonpath_with_sources(runtime_env_vars.get("PYTHONPATH"))
     if not get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
         return
 
-    # exec_command logs its command. Keep credentials out of the command line;
-    # NamedTemporaryFile is mode 0600 and is removed after submission finishes.
+    # Ray jobs do not inherit arbitrary environment variables from the submitting
+    # shell. Use a mode-0600 file because exec_command logs its command line.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as runtime_env_file:
         json.dump({"env_vars": runtime_env_vars}, runtime_env_file)
         runtime_env_file.flush()
@@ -149,14 +149,18 @@ def execute_train(
 
 
 def _api_rm_env_vars(train_args: str) -> dict[str, str]:
+    """Collect the environment variables named by --api-rm-config."""
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--api-rm-config")
     args, _ = parser.parse_known_args(shlex.split(train_args))
     if not args.api_rm_config:
         return {}
-    from miles.rollout.rm_hub.api import api_rm_env, load_api_rm_configs
+    from miles.rollout.rm_hub.api import load_api_rm_configs
 
-    return api_rm_env(load_api_rm_configs(args.api_rm_config))
+    return {
+        config.api_key_env: os.environ[config.api_key_env]
+        for config in load_api_rm_configs(args.api_rm_config).values()
+    }
 
 
 def _pythonpath_with_sources(*additional_pythonpaths: str | None) -> str:

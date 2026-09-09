@@ -85,10 +85,6 @@ def get_api_rm_configs(args) -> dict[str, ApiRewardConfig]:
     return configs
 
 
-def api_rm_env(configs: dict[str, ApiRewardConfig]) -> dict[str, str]:
-    return {config.api_key_env: os.environ[config.api_key_env] for config in configs.values()}
-
-
 def _encode_image(sample: Sample) -> str:
     (frame,) = generated_output_to_rgb_hwc_uint8_frames(sample.generated_output, None, round_normalized=True)
     buffer = io.BytesIO()
