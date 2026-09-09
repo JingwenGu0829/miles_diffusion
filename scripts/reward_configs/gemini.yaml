@@ -1,6 +1,0 @@
-gemini:
-  model: gemini-3.8-flash
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-  api_key_env: GEMINI_API_KEY
-  timeout_s: 90
-  max_concurrency: 2

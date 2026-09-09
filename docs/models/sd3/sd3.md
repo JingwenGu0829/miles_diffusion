@@ -215,10 +215,11 @@ LoRA, SDE, and training settings. HPS shares a rollout GPU; the API reward uses 
 local GPU slot. The mixture weights illustrate the integration and have not
 been tuned.
 
-The default API configuration is `scripts/reward_configs/gemini.yaml`. Set the
-`model` field to a Gemini model available to your account, or pass
-`--api-rm-config /path/to/rewards.yaml` with a `gemini` alias. The recipe uses
-`--reward-key weighted` to train on the sum and logs both components.
+The API configuration is inline in the script's `api_rm_config` dictionary.
+Set its `model` field to a Gemini model available to your account; the endpoint,
+key environment variable, timeout, and concurrency are configured alongside it.
+The script writes a temporary YAML for `--api-rm-config` when submitting the job.
+The recipe uses `--reward-key weighted` to train on the sum and logs both components.
 See [Rewards](../../user-guide/rewards.md) for the shared OpenAI/Gemini API
 contract and configuration fields.
 

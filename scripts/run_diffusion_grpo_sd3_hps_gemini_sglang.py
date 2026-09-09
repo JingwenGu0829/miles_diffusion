@@ -6,8 +6,8 @@ The mixture weights are illustrative; no complete training curve has been run.
 2-GPU colocate: FSDP DP=2, two rollout engines, and one HPS worker share the GPUs.
 The Gemini API reward does not consume a local GPU slot.
 
-HF_TOKEN and GEMINI_API_KEY must be set. The API model and endpoint are configured
-in scripts/reward_configs/gemini.yaml; override the file with --api-rm-config.
+HF_TOKEN and GEMINI_API_KEY must be set. Edit api_rm_config below to change the
+API model, endpoint, timeout, or concurrency.
 
 Usage:
     python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py
@@ -16,10 +16,11 @@ Usage:
 
 import os
 import shlex
+import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 import typer
+import yaml
 
 import miles.utils.external_utils.command_utils as U
 
@@ -36,7 +37,6 @@ MASTER_SGLANG_PYTHON = "/sgl-workspace/master_sglang/sglang/python"
 @dataclass
 class ScriptArgs(U.ExecuteTrainConfig):
     num_rollout: int = 600
-    api_rm_config: str = str(Path(__file__).resolve().parent / "reward_configs" / "gemini.yaml")
     data_dir: str = "/root/datasets"
     debug_alignment: bool = False
     extra_args: str = ""
@@ -81,8 +81,17 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
 
     lora_args = "--use-lora --lora-ipc-weight-sync --lora-rank 32 --lora-alpha 64 --lora-init-weights gaussian "
 
+    api_rm_config = {
+        "gemini": {
+            "model": "gemini-3.8-flash",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key_env": "GEMINI_API_KEY",
+            "timeout_s": 90,
+            "max_concurrency": 2,
+        }
+    }
+
     reward_args = (
-        f"--api-rm-config {shlex.quote(args.api_rm_config)} "
         "--custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm "
         "--custom-rm-args hps=0.7,gemini=0.3 --reward-key weighted "
         "--hps-num-workers 1 --hps-batch-size 8 --hps-version v2.1 --hps-reward-colocate "
@@ -113,21 +122,26 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
         "--deterministic-mode "
     ) + ("--diffusion-debug-mode --debug-skip-optimizer-step " if args.debug_alignment else "")
 
-    U.execute_train(
-        train_args=(
-            f"{ckpt_args} {rollout_args} {eval_args} {grpo_args} {optimizer_args} "
-            f"{lora_args} {reward_args} {wandb_args} {sglang_args} {train_backend_args} {perf_args} "
-            f"{misc_args} {args.extra_args}"
-        ),
-        num_gpus_per_node=2,
-        config=args,
-        extra_env_vars={
-            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-            "PYTHONPATH": MASTER_SGLANG_PYTHON,
-            "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
-            **({"MILES_VERIFY_WEIGHT_SYNC": "1"} if args.debug_alignment else {}),
-        },
-    )
+    # Keep the inline config readable by the driver until job submission completes.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as rm_config_file:
+        yaml.safe_dump(api_rm_config, rm_config_file)
+        rm_config_file.flush()
+        U.execute_train(
+            train_args=(
+                f"--api-rm-config {shlex.quote(rm_config_file.name)} "
+                f"{ckpt_args} {rollout_args} {eval_args} {grpo_args} {optimizer_args} "
+                f"{lora_args} {reward_args} {wandb_args} {sglang_args} {train_backend_args} {perf_args} "
+                f"{misc_args} {args.extra_args}"
+            ),
+            num_gpus_per_node=2,
+            config=args,
+            extra_env_vars={
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "PYTHONPATH": MASTER_SGLANG_PYTHON,
+                "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+                **({"MILES_VERIFY_WEIGHT_SYNC": "1"} if args.debug_alignment else {}),
+            },
+        )
 
 
 @U.dataclass_cli
