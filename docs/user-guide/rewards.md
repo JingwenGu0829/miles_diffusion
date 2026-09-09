@@ -312,8 +312,9 @@ SD3 Flow-GRPO recipe (`scripts/run_diffusion_grpo_sd3_ocr_sglang.py`).
 
 ### Remote RM (`--rm-type remote_rm`)
 
-The CLI exposes `--rm-url` for a remote reward service, but **`rm_hub` does not
-implement `remote_rm` today** — selecting it raises `NotImplementedError`.
+The CLI exposes `--rm-url` for a remote reward service, but `rm_hub` has no
+built-in `remote_rm` implementation. Selecting it without configuring an API
+reward with that name raises `NotImplementedError`.
 For OpenAI-compatible image scoring, use [API rewards](#api-rewards).
 For other service protocols, use `--custom-rm-path` (see [Customization](customization.md)).
 

@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
 
+# Inspired by Customized-GRPO's prompt-following rubric (arXiv:2510.18263,
+# Appendix C). We use a JSON score instead of extracting numbers from prose.
 _DEFAULT_PROMPT = """Evaluate how faithfully the image follows the generation prompt.
 Check that requested subjects, attributes, counts, actions, and spatial relationships
 are correct, and that important requested details are not missing. Do not substitute
@@ -44,7 +46,9 @@ _RESPONSE_FORMAT = {
         },
     },
 }
-_RESERVED_NAMES = {"hps", "pickscore", "ocr", "weighted", "remote_rm"}
+
+# Names already consumed by built-in dispatch or mixture output.
+_RESERVED_API_RM_NAMES = {"hps", "pickscore", "ocr", "weighted"}
 
 
 class ApiRewardConfig(BaseModel):
@@ -68,7 +72,7 @@ def load_api_rm_configs(path: str) -> dict[str, ApiRewardConfig]:
 
     configs = {}
     for name, entry in entries.items():
-        if not isinstance(name, str) or not name or name in _RESERVED_NAMES:
+        if not isinstance(name, str) or not name or name in _RESERVED_API_RM_NAMES:
             raise ValueError(f"Invalid or reserved API reward name: {name!r}")
         entry = dict(entry)
         if prompt_path := entry.pop("prompt_path", None):
