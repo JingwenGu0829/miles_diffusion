@@ -82,18 +82,16 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
     lora_args = "--use-lora --lora-ipc-weight-sync --lora-rank 32 --lora-alpha 64 --lora-init-weights gaussian "
 
     api_rm_config = {
-        "gemini": {
-            "model": "gemini-3.8-flash",
-            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "api_key_env": "GEMINI_API_KEY",
-            "timeout_s": 90,
-            "max_concurrency": 2,
-        }
+        "model": "gemini-3.8-flash",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API_KEY",
+        "timeout_s": 90,
+        "max_concurrency": 2,
     }
 
     reward_args = (
         "--custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm "
-        "--custom-rm-args hps=0.7,gemini=0.3 --reward-key weighted "
+        "--custom-rm-args hps=0.7,api=0.3 --reward-key weighted "
         "--hps-num-workers 1 --hps-batch-size 8 --hps-version v2.1 --hps-reward-colocate "
     )
 

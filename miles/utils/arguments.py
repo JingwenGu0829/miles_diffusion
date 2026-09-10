@@ -1229,14 +1229,13 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 "--rm-type",
                 type=str,
                 default=None,
-                help="Built-in reward (pickscore / hps / ocr) or a name from --api-rm-config. "
-                "Ignored when --custom-rm-path is set.",
+                help="Built-in reward (pickscore / hps / ocr / api). Ignored when --custom-rm-path is set.",
             )
             parser.add_argument(
                 "--api-rm-config",
                 type=str,
                 default=None,
-                help="YAML mapping of API reward names to model, base_url, api_key_env, and optional prompt_path, "
+                help="YAML configuration for one API reward: model, base_url, api_key_env, and optional prompt_path, "
                 "score_min/score_max, timeout_s, max_concurrency. Images only; failures stop the job.",
             )
             parser.add_argument(
@@ -1534,24 +1533,18 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
     return eval_datasets
 
 
-def load_api_rm_configs(path: str) -> dict[str, ApiRewardConfig]:
+def load_api_rm_config(path: str) -> ApiRewardConfig:
     config_path = Path(path)
-    entries = yaml.safe_load(config_path.read_text())
-    if not isinstance(entries, dict):
+    config = yaml.safe_load(config_path.read_text())
+    if not isinstance(config, dict):
         raise ValueError("--api-rm-config must contain a mapping")
 
-    configs = {}
-    for name, entry in entries.items():
-        if not isinstance(name, str) or not name or name in {"hps", "pickscore", "ocr", "weighted"}:
-            raise ValueError(f"Invalid or reserved API reward name: {name!r}")
-        entry = dict(entry)
-        if prompt_path := entry.pop("prompt_path", None):
-            entry["prompt"] = (config_path.parent / prompt_path).read_text()
-        config = ApiRewardConfig(**entry)
-        if not isinstance(config.max_concurrency, int) or config.max_concurrency <= 0:
-            raise ValueError(f"--api-rm-config: {name}.max_concurrency must be a positive integer")
-        configs[name] = config
-    return configs
+    if prompt_path := config.pop("prompt_path", None):
+        config["prompt"] = (config_path.parent / prompt_path).read_text()
+    config = ApiRewardConfig(**config)
+    if not isinstance(config.max_concurrency, int) or config.max_concurrency <= 0:
+        raise ValueError("--api-rm-config: max_concurrency must be a positive integer")
+    return config
 
 
 def set_default_diffusion_args(args) -> None:
@@ -1853,9 +1846,9 @@ def miles_validate_args(args):
 
     if args.api_rm_config:
         # Resolve prompt files before args cross the Ray process or node boundary.
-        args._api_rm_configs = load_api_rm_configs(args.api_rm_config)
+        args._api_rm_config = load_api_rm_config(args.api_rm_config)
     else:
-        args._api_rm_configs = {}
+        args._api_rm_config = None
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path

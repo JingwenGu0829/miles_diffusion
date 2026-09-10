@@ -8,6 +8,7 @@ from tests.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=5, suite="stage-a-cpu", labels=[])
 
+from argparse import Namespace
 from unittest.mock import Mock, call
 
 import miles.rollout.rm_hub.core as core_module
@@ -15,14 +16,17 @@ from miles.rollout.rm_hub.api import ApiRewardActor, AsyncApiRewardPool
 from miles.utils.api_rm_config import ApiRewardConfig
 
 
-def test_pool_uses_configured_zero_gpu_workers(monkeypatch):
+def test_pool_reuses_configured_zero_gpu_workers(monkeypatch):
+    monkeypatch.setattr(AsyncApiRewardPool, "_instances", {})
     actor_cls = Mock()
     actor_cls.options.return_value = actor_cls
     actor_cls.remote.side_effect = lambda **kwargs: Mock()
     remote = Mock(return_value=actor_cls)
     monkeypatch.setattr(core_module.ray, "remote", remote)
     config = ApiRewardConfig(model="judge", api_key_env="TEST_RM_KEY", max_concurrency=2)
-    pool = AsyncApiRewardPool("judge", config)
+    args = Namespace(_api_rm_config=config)
+    pool = AsyncApiRewardPool(args)
+    assert AsyncApiRewardPool(args) is pool
 
     assert remote.call_args_list == [call(ApiRewardActor)] * 2
     assert (

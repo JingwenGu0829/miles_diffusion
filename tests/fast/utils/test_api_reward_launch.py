@@ -15,7 +15,7 @@ from miles.utils.external_utils import command_utils as commands
 
 def _config(tmp_path):
     path = tmp_path / "reward config.yaml"
-    path.write_text("gemini:\n  model: gemini-3.8-flash\n  api_key_env: TEST_GEMINI_KEY\n")
+    path.write_text("model: gemini-3.8-flash\napi_key_env: TEST_GEMINI_KEY\n")
     return path
 
 
@@ -39,7 +39,7 @@ def test_submit_passes_configured_key_in_private_runtime_env_file(monkeypatch, t
         return ""
 
     monkeypatch.setattr(commands, "exec_command", execute)
-    commands.execute_train(f"--api-rm-config {shlex.quote(str(_config(tmp_path)))} --rm-type gemini", 1)
+    commands.execute_train(f"--api-rm-config {shlex.quote(str(_config(tmp_path)))} --rm-type api", 1)
     assert len(submissions) == 1
     assert not submissions[0].exists()
 

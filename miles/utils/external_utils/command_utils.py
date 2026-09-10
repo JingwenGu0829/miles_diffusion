@@ -151,7 +151,7 @@ def execute_train(
 
 
 def _api_rm_env_vars(train_args: str) -> dict[str, str]:
-    """Collect the environment variables named by --api-rm-config."""
+    """Forward the API key environment variable named by --api-rm-config."""
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--api-rm-config")
     args, _ = parser.parse_known_args(shlex.split(train_args))
@@ -159,8 +159,9 @@ def _api_rm_env_vars(train_args: str) -> dict[str, str]:
         return {}
 
     # Only forward credentials here; the training driver validates the reward configuration.
-    entries = yaml.safe_load(Path(args.api_rm_config).read_text())
-    return {entry["api_key_env"]: os.environ[entry["api_key_env"]] for entry in entries.values()}
+    config = yaml.safe_load(Path(args.api_rm_config).read_text())
+    key_env = config["api_key_env"]
+    return {key_env: os.environ[key_env]}
 
 
 def _pythonpath_with_sources(*additional_pythonpaths: str | None) -> str:

@@ -13,6 +13,7 @@ import torch
 from PIL import Image
 
 from miles.utils.api_rm_config import ApiRewardConfig
+from miles.utils.misc import SingletonMeta
 from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
 
@@ -95,10 +96,13 @@ class ApiRewardActor:
         return self.scorer(prompts, images)
 
 
-class AsyncApiRewardPool(AsyncRewardActorPool):
+class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
     """One synchronous HTTP request per zero-GPU actor; shared across microgroups."""
 
-    def __init__(self, name: str, config: ApiRewardConfig) -> None:
+    def __init__(self, args) -> None:
+        config = args._api_rm_config
+        if config is None:
+            raise ValueError("API reward requires --api-rm-config.")
         super().__init__(
             actor_cls=ApiRewardActor,
             actor_kwargs={"config": config},
@@ -106,24 +110,16 @@ class AsyncApiRewardPool(AsyncRewardActorPool):
             batch_size=1,
             num_gpus_per_worker=0,
             colocate=False,
-            name=name,
+            name="api",
         )
 
 
-# Unlike class singletons, this keeps different models/rubrics/endpoints isolated.
-_pools: dict[str, AsyncApiRewardPool] = {}
-
-
-async def api_rm(args, samples: Sequence[Sample], *, name: str | None = None, **kwargs) -> list[float]:
-    name = name or args.rm_type
-    config = args._api_rm_configs[name]
-    if name not in _pools:
-        _pools[name] = AsyncApiRewardPool(name, config)
-    pool = _pools[name]
+async def api_rm(args, samples: Sequence[Sample], **kwargs) -> list[float]:
+    pool = AsyncApiRewardPool(args)
     try:
         scores, max_queue_depth = await pool.score([s.generated_output for s in samples], [s.prompt for s in samples])
     except Exception as exc:
         identities = [(s.index, s.request_id) for s in samples]
-        raise RuntimeError(f"API reward {name!r} failed for samples (index, request_id)={identities}: {exc}") from exc
-    record_reward_queue_depth(samples, name, max_queue_depth)
+        raise RuntimeError(f"API reward failed for samples (index, request_id)={identities}: {exc}") from exc
+    record_reward_queue_depth(samples, "api", max_queue_depth)
     return scores

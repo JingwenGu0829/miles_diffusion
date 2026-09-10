@@ -13,8 +13,8 @@ For `--custom-rm-path`, `--custom-reward-post-process-path`, and other
 
 | Stage | Flag | Role |
 |---|---|---|
-| Reward type | `--rm-type` | Selects a local scorer (`pickscore`, `hps`, `ocr`) or a configured API reward name; ignored when `--custom-rm-path` is set |
-| API configuration | `--api-rm-config` | YAML mapping of API reward names to model, endpoint, and API key environment variable |
+| Reward type | `--rm-type` | Selects `pickscore`, `hps`, `ocr`, or `api`; ignored when `--custom-rm-path` is set |
+| API configuration | `--api-rm-config` | YAML configuration for one API reward: model, endpoint, and API key environment variable |
 | Per-sample override | `metadata.rm_type` in JSONL | Overrides global `--rm-type` |
 | Custom reward / norm | see [Customization](customization.md) | `--custom-rm-path`, `--custom-reward-post-process-path` |
 
@@ -122,10 +122,9 @@ export OPENAI_API_KEY="your-key"
 ```
 
 ```yaml
-judge:
-  model: YOUR_OPENAI_VISION_MODEL
-  base_url: https://api.openai.com/v1
-  api_key_env: OPENAI_API_KEY
+model: YOUR_OPENAI_VISION_MODEL
+base_url: https://api.openai.com/v1
+api_key_env: OPENAI_API_KEY
 ```
 
 **Gemini:**
@@ -135,10 +134,9 @@ export GEMINI_API_KEY="your-key"
 ```
 
 ```yaml
-judge:
-  model: YOUR_GEMINI_VISION_MODEL
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-  api_key_env: GEMINI_API_KEY
+model: YOUR_GEMINI_VISION_MODEL
+base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+api_key_env: GEMINI_API_KEY
 ```
 
 Add these reward arguments to your image training recipe, replacing its existing
@@ -146,24 +144,22 @@ reward selection:
 
 ```bash
 --api-rm-config rewards.yaml \
---rm-type judge
+--rm-type api
 ```
 
-The top-level name `judge` is an alias chosen by the user. `model` is the
-provider's model ID/version, `base_url` is the API endpoint, and `api_key_env`
-names the environment variable containing the key. These fields are independent
-of the alias. The configuration stores the environment variable's name, not the
-key itself.
+`model` is the provider's model ID/version, `base_url` is the API endpoint, and
+`api_key_env` names the environment variable containing the key. The configuration
+stores the environment variable's name, not the key itself.
 
-A YAML file can define multiple aliases, including different models or rubrics
-at the same endpoint. Every entry in the file requires its named key to be set,
-so include only configurations for which credentials are available.
+Each training job uses one fixed API reward configuration and one pool, including
+for evaluation. Multiple API models or scoring rubrics in the same job are not
+supported. To use a different API metric, change the configuration for a new job.
 
-The launcher helper `execute_train` forwards these named environment variables
-to Ray's runtime environment. If submitting a Ray job yourself, include them in
-that job's `runtime_env.env_vars` so the driver and reward worker can read them.
-The YAML must be readable by the submitting process and training driver; resolved
-configurations and rubric text are carried with the training arguments.
+The launcher helper `execute_train` forwards the named environment variable
+to Ray's runtime environment. If submitting a Ray job yourself, include it in
+that job's `runtime_env.env_vars` so the driver and reward worker can read it.
+The YAML must be readable by the submitting process and training driver; the resolved
+configuration and rubric text are carried with the training arguments.
 
 #### Scoring and configuration
 
@@ -182,14 +178,14 @@ and within the configured range, then returns it as a float.
 | `prompt` / `prompt_path` | Built-in prompt-adherence rubric | Inline rubric or a text file relative to the YAML; set at most one |
 | `score_min` / `score_max` | `0` / `4` | Accepted score range |
 | `timeout_s` | `60` | Request deadline in seconds |
-| `max_concurrency` | `8` | Zero-GPU Ray actor count per alias; each actor sends one request at a time, shared across microgroups |
+| `max_concurrency` | `8` | Zero-GPU Ray actor count; each actor sends one request at a time, shared across microgroups |
 
-For a custom rubric, add `prompt_path: rubric.txt` to the alias's configuration.
+For a custom rubric, add `prompt_path: rubric.txt` to the configuration.
 The rubric should request the same JSON `score` field and describe the score
 range. Scores are returned without rescaling.
 
 API rewards reuse `AsyncRewardActorPool` from `rm_hub/core.py`, like OCR and the
-GPU rewards. Each alias owns a pool of zero-GPU Ray actors. `ApiRewardActor`
+GPU rewards. The singleton pool owns zero-GPU Ray actors. `ApiRewardActor`
 converts rollout tensors to images, and `OpenAIImageScorer` handles the HTTP
 request and score parsing. The shared pool handles batching, worker selection,
 result ordering, and queue-depth metrics. These actors do not consume colocated
@@ -251,30 +247,29 @@ A shipped recipe uses it: `scripts/run_diffusion_grpo_sd3_ocr_pickscore_sglang.p
 curve and numbers. Shuffling matters more than usual there: with 8 prompts per rollout one hard
 batch moves the per-rollout mean visibly.
 
-Using the `judge` configuration from [API rewards](#api-rewards),
+Using the configuration from [API rewards](#api-rewards),
 add these reward arguments to a colocated image training recipe:
 
 ```bash
 --api-rm-config rewards.yaml \
 --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \
---custom-rm-args "hps=0.7,judge=0.3" \
+--custom-rm-args "hps=0.7,api=0.3" \
 --reward-key weighted \
 --hps-version v2.1 \
 --hps-reward-colocate
 ```
 
 This example requires the recipe's `--colocate` flag for HPS placement.
-The weights illustrate the syntax; they are not tuned defaults. API aliases can
-also be combined with PickScore, OCR, or other configured API aliases. Each local
-reward retains its model and placement settings; API rewards use their YAML
-settings.
+The weights illustrate the syntax; they are not tuned defaults. The API reward can
+also be combined with PickScore or OCR. Each local reward retains its model and
+placement settings; the API reward uses its YAML settings.
 
 For each sample, this function returns a dictionary such as:
 
 ```python
 {
     "hps": 0.3,
-    "judge": 3.0,
+    "api": 3.0,
     "weighted": 1.11,  # 0.7 * 0.3 + 0.3 * 3.0
 }
 ```
@@ -324,8 +319,7 @@ SD3 Flow-GRPO recipe (`scripts/run_diffusion_grpo_sd3_ocr_sglang.py`).
 ### Remote RM (`--rm-type remote_rm`)
 
 The CLI exposes `--rm-url` for a remote reward service, but `rm_hub` has no
-built-in `remote_rm` implementation. Selecting it without configuring an API
-reward with that name raises `NotImplementedError`.
+built-in `remote_rm` implementation. Selecting it raises `NotImplementedError`.
 For OpenAI-compatible image scoring, use [API rewards](#api-rewards).
 For other service protocols, use `--custom-rm-path` (see [Customization](customization.md)).
 
@@ -338,8 +332,8 @@ generate_and_rm_microgroup()
     → all pickscore?   pickscore_rm (batched)
     → all hps?         hps_rm (batched)
     → all ocr?         ocr_rm (batched, one image per actor call)
-    → all same API?    api_rm (batched, configured alias)
-    → else             per-sample async_rm → local scorer / API alias / NotImplementedError
+    → all api?         api_rm (batched)
+    → else             per-sample async_rm → local scorer / api / NotImplementedError
   → sample.reward = score
   → RolloutManager._post_process_rewards()      # GRPO advantage normalization
 ```

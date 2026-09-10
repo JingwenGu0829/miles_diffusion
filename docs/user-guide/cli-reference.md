@@ -266,8 +266,8 @@ See [Dtype Control](../advanced/dtype-control.md).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
-| `--rm-type` | str | – | `pickscore` / `hps` / `ocr` or an alias from `--api-rm-config`. Overridable per sample via `metadata.rm_type`. Ignored when `--custom-rm-path` is set. |
-| `--api-rm-config` | str | – | YAML mapping of API reward aliases to `model`, `base_url`, `api_key_env`, and optional rubric, score range, timeout, and concurrency settings. See [API rewards](rewards.md#api-rewards). |
+| `--rm-type` | str | – | `pickscore` / `hps` / `ocr` / `api`. Overridable per sample via `metadata.rm_type`. Ignored when `--custom-rm-path` is set. |
+| `--api-rm-config` | str | – | YAML configuration for one API reward: `model`, `base_url`, `api_key_env`, and optional rubric, score range, timeout, and concurrency settings. See [API rewards](rewards.md#api-rewards). |
 | `--group-rm` | flag | off | Score a whole prompt group at once. |
 | `--custom-rm-path` | str | – | `async def rm(args, samples)` returning one scalar or dictionary per sample. Batched only; replaces the `--rm-type` dispatch entirely. Shipped: `miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm` (weighted sum of local and configured API rewards). |
 | `--custom-rm-args` | str | – | Opaque config string for the custom RM, read as `args.custom_rm_args`; e.g. `"hps=0.7,pickscore=0.3"` for `rm_hub.weighted_mixture_rm`. |

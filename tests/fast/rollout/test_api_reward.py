@@ -3,10 +3,10 @@
 Mental model:
 
     generated_output -> actor -> prompt + PNG request -> validated numeric score
-    api_rm(alias) -> cached pool -> raw tensors in, scores and queue depth out
+    api_rm -> singleton pool -> raw tensors in, scores and queue depth out
 
 Covered: image/prompt pairing and client configuration; fatal HTTP errors; score validation;
-image-only input; alias isolation and dispatch; YAML rubric loading and credential safety.
+image-only input; reward dispatch; YAML rubric loading and credential safety.
 Ray worker configuration is covered by test_api_reward_pool.py.
 """
 
@@ -29,7 +29,7 @@ import yaml
 from PIL import Image
 
 import miles.rollout.rm_hub.api as api_module
-from miles.rollout.rm_hub import batched_async_rm
+from miles.rollout.rm_hub import async_rm, batched_async_rm
 from miles.rollout.rm_hub.api import (
     ApiRewardActor,
     _parse_score,
@@ -43,8 +43,8 @@ def _config(**overrides):
     return ApiRewardConfig(model="judge-v1", api_key_env="TEST_RM_KEY", **overrides)
 
 
-def _args(**configs):
-    return Namespace(rm_type=next(iter(configs)), custom_rm_path=None, _api_rm_configs=configs)
+def _args():
+    return Namespace(rm_type="api", custom_rm_path=None, _api_rm_config=_config())
 
 
 def _sample(index):
@@ -75,9 +75,8 @@ def _response(score):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_api_state(monkeypatch):
+def _api_key(monkeypatch):
     monkeypatch.setenv("TEST_RM_KEY", "test-only-secret")
-    monkeypatch.setattr(api_module, "_pools", {})
 
 
 @pytest.fixture
@@ -121,26 +120,17 @@ def test_actor_preserves_image_prompt_pairing(sdk_transport):
     assert clients[0]["max_retries"] == 0
 
 
-async def test_rm_reuses_pools_by_alias_and_records_queue_depth(monkeypatch):
-    created = {}
-
-    def make_pool(name, config):
-        pool = AsyncMock()
-        pool.score.return_value = ([1.0], 3 if name == "judge" else 2)
-        assert name not in created
-        created[name] = pool
-        return pool
-
-    monkeypatch.setattr(api_module, "AsyncApiRewardPool", make_pool)
-    args = _args(judge=_config(), other=_config())
+async def test_rm_passes_raw_tensor_and_records_queue_depth(monkeypatch):
+    pool = AsyncMock()
+    pool.score.return_value = ([1.0], 3)
+    monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda args: pool)
+    args = _args()
     sample = _sample(1)
-    for name in ("judge", "other", "judge"):
-        assert await api_rm(args, [sample], name=name) == [1.0]
-    assert created["judge"].score.await_count == 2
-    (output,), prompts = created["judge"].score.await_args.args
+    assert await api_rm(args, [sample]) == [1.0]
+    (output,), prompts = pool.score.await_args.args
     assert output is sample.generated_output
     assert prompts == [sample.prompt]
-    assert sample.reward_max_queue_depth == {"judge": 3.0, "other": 2.0}
+    assert sample.reward_max_queue_depth == {"api": 3.0}
 
 
 def test_http_error_propagates_without_sdk_retries(sdk_transport):
@@ -188,62 +178,60 @@ def test_video_is_rejected_before_http(sdk_transport):
 async def test_builtin_dispatch_and_per_sample_override(monkeypatch):
     pool = AsyncMock()
     pool.score.side_effect = [([1.0, 2.0], 0), ([3.0], 0)]
-    monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda name, config: pool)
-    args = _args(judge=_config())
+    monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda args: pool)
+    args = _args()
     assert await batched_async_rm(args, [_sample(1), _sample(2)]) == [1.0, 2.0]
     args.rm_type = "unused"
     sample = _sample(3)
-    sample.metadata = {"rm_type": "judge"}
-    assert await batched_async_rm(args, [sample]) == [3.0]
+    sample.metadata = {"rm_type": "api"}
+    assert await async_rm(args, sample) == 3.0
 
 
 def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path):
-    from miles.utils.arguments import load_api_rm_configs
+    from miles.utils.arguments import load_api_rm_config
 
     (tmp_path / "rubric.txt").write_text("Evaluate prompt adherence from 0 to 10. Return JSON with score.")
     config_path = tmp_path / "rm.yaml"
     config_path.write_text(
         yaml.safe_dump(
             {
-                "judge": {
-                    "model": "judge-version-123",
-                    "api_key_env": "TEST_RM_KEY",
-                    "prompt_path": "rubric.txt",
-                    "score_max": 10,
-                }
+                "model": "judge-version-123",
+                "api_key_env": "TEST_RM_KEY",
+                "prompt_path": "rubric.txt",
+                "score_max": 10,
             }
         )
     )
-    args = Namespace(api_rm_config=str(config_path), _api_rm_configs=load_api_rm_configs(str(config_path)))
+    args = Namespace(api_rm_config=str(config_path), _api_rm_config=load_api_rm_config(str(config_path)))
     args = pickle.loads(pickle.dumps(args))
-    assert args._api_rm_configs["judge"].model == "judge-version-123"
+    assert args._api_rm_config.model == "judge-version-123"
     (tmp_path / "rubric.txt").unlink()
-    assert "0 to 10" in args._api_rm_configs["judge"].prompt
+    assert "0 to 10" in args._api_rm_config.prompt
     assert b"test-only-secret" not in pickle.dumps(args)
 
 
 def test_inline_api_key_is_rejected(tmp_path):
-    from miles.utils.arguments import load_api_rm_configs
+    from miles.utils.arguments import load_api_rm_config
 
     path = tmp_path / "rm.yaml"
-    path.write_text("judge:\n  model: judge\n  api_key_env: TEST_RM_KEY\n  api_key: not-allowed\n")
+    path.write_text("model: judge\napi_key_env: TEST_RM_KEY\napi_key: not-allowed\n")
     with pytest.raises(TypeError, match="api_key"):
-        load_api_rm_configs(str(path))
+        load_api_rm_config(str(path))
 
 
-def test_api_alias_cannot_shadow_local_reward(tmp_path):
-    from miles.utils.arguments import load_api_rm_configs
+def test_multiple_api_configs_are_rejected(tmp_path):
+    from miles.utils.arguments import load_api_rm_config
 
     path = tmp_path / "rm.yaml"
-    path.write_text("hps:\n  model: judge\n  api_key_env: TEST_RM_KEY\n")
-    with pytest.raises(ValueError, match="reserved API reward name"):
-        load_api_rm_configs(str(path))
+    path.write_text(yaml.safe_dump({"alignment": {"model": "judge"}, "aesthetic": {"model": "judge"}}))
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        load_api_rm_config(str(path))
 
 
 def test_zero_api_workers_is_rejected_at_startup(tmp_path):
-    from miles.utils.arguments import load_api_rm_configs
+    from miles.utils.arguments import load_api_rm_config
 
     path = tmp_path / "rm.yaml"
-    path.write_text("judge:\n  model: judge\n  api_key_env: TEST_RM_KEY\n  max_concurrency: 0\n")
+    path.write_text("model: judge\napi_key_env: TEST_RM_KEY\nmax_concurrency: 0\n")
     with pytest.raises(ValueError, match="max_concurrency must be a positive integer"):
-        load_api_rm_configs(str(path))
+        load_api_rm_config(str(path))
