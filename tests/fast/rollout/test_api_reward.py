@@ -32,10 +32,10 @@ import miles.rollout.rm_hub.api as api_module
 from miles.rollout.rm_hub import batched_async_rm
 from miles.rollout.rm_hub.api import (
     ApiRewardActor,
-    ApiRewardConfig,
     _parse_score,
     api_rm,
 )
+from miles.utils.api_rm_config import ApiRewardConfig
 from miles.utils.types import Sample
 
 

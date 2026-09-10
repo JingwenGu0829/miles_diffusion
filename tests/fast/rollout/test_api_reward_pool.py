@@ -11,7 +11,8 @@ register_cpu_ci(est_time=5, suite="stage-a-cpu", labels=[])
 from unittest.mock import Mock, call
 
 import miles.rollout.rm_hub.core as core_module
-from miles.rollout.rm_hub.api import ApiRewardActor, ApiRewardConfig, AsyncApiRewardPool
+from miles.rollout.rm_hub.api import ApiRewardActor, AsyncApiRewardPool
+from miles.utils.api_rm_config import ApiRewardConfig
 
 
 def test_pool_uses_configured_zero_gpu_workers(monkeypatch):

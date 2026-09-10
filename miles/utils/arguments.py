@@ -21,6 +21,7 @@ import yaml
 
 from miles.backends.sglang_diffusion_utils.arguments import add_sglang_diffusion_arguments
 from miles.backends.sglang_diffusion_utils.arguments import validate_args as sglang_validate_args
+from miles.utils.api_rm_config import ApiRewardConfig
 from miles.utils.eval_config import EvalDatasetConfig, build_eval_dataset_configs, ensure_dataset_list
 from miles.utils.logging_utils import configure_logger
 
@@ -1533,9 +1534,7 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
     return eval_datasets
 
 
-def load_api_rm_configs(path: str) -> dict:
-    from miles.rollout.rm_hub.api import ApiRewardConfig
-
+def load_api_rm_configs(path: str) -> dict[str, ApiRewardConfig]:
     config_path = Path(path)
     entries = yaml.safe_load(config_path.read_text())
     if not isinstance(entries, dict):

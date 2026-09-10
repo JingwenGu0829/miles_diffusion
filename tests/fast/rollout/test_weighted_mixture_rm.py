@@ -23,8 +23,8 @@ import pytest
 
 import miles.rollout.rm_hub.api as api_module
 import miles.rollout.rm_hub.weighted_mixture_rm as weighted_mixture_rm_module
-from miles.rollout.rm_hub.api import ApiRewardConfig
 from miles.rollout.rm_hub.weighted_mixture_rm import parse_weights, weighted_mixture_rm
+from miles.utils.api_rm_config import ApiRewardConfig
 from miles.utils.types import Sample
 
 
