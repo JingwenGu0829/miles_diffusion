@@ -148,11 +148,6 @@ class RolloutManager:
     def dispose(self):
         from miles.dashboard import hooks
 
-        if self.args.api_rm_config:
-            from miles.rollout.rm_hub.api import close_api_rm_pools
-            from miles.utils.async_utils import run
-
-            run(close_api_rm_pools())
         hooks.detach_and_flush()
         if self._metric_checker is not None:
             self._metric_checker.dispose()

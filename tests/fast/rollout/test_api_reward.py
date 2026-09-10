@@ -7,7 +7,7 @@ Mental model:
 
 Covered: image/prompt pairing and client configuration; fatal HTTP errors; score validation;
 image-only input; alias isolation and dispatch; YAML rubric loading and credential safety.
-Ray worker configuration and cleanup are covered by test_api_reward_pool.py.
+Ray worker configuration is covered by test_api_reward_pool.py.
 """
 
 from tests.ci.ci_register import register_cpu_ci
@@ -24,7 +24,6 @@ from unittest.mock import AsyncMock
 import httpx
 import openai
 import pytest
-import pytest_asyncio
 import torch
 import yaml
 from PIL import Image
@@ -36,7 +35,6 @@ from miles.rollout.rm_hub.api import (
     ApiRewardConfig,
     _parse_score,
     api_rm,
-    close_api_rm_pools,
     get_api_rm_configs,
     load_api_rm_configs,
 )
@@ -78,11 +76,10 @@ def _response(score):
     )
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def _cleanup(monkeypatch):
+@pytest.fixture(autouse=True)
+def _isolate_api_state(monkeypatch):
     monkeypatch.setenv("TEST_RM_KEY", "test-only-secret")
-    yield
-    await close_api_rm_pools()
+    monkeypatch.setattr(api_module, "_pools", {})
 
 
 @pytest.fixture
@@ -105,7 +102,7 @@ def sdk_transport(monkeypatch):
         client.close()
 
 
-def test_actor_preserves_image_prompt_pairing_and_closes_client(sdk_transport):
+def test_actor_preserves_image_prompt_pairing(sdk_transport):
     def handler(request):
         payload = json.loads(request.content)
         content = payload["messages"][1]["content"]
@@ -124,8 +121,6 @@ def test_actor_preserves_image_prompt_pairing_and_closes_client(sdk_transport):
     samples = [_sample(2), _sample(1)]
     assert actor.score_batch([s.generated_output for s in samples], [s.prompt for s in samples]) == [2.0, 1.0]
     assert clients[0]["max_retries"] == 0
-    actor.close()
-    assert actor.scorer.client.is_closed()
 
 
 async def test_rm_reuses_pools_by_alias_and_records_queue_depth(monkeypatch):
@@ -148,13 +143,9 @@ async def test_rm_reuses_pools_by_alias_and_records_queue_depth(monkeypatch):
     assert output is sample.generated_output
     assert prompts == [sample.prompt]
     assert sample.reward_max_queue_depth == {"judge": 3.0, "other": 2.0}
-    await close_api_rm_pools()
-    for pool in created.values():
-        pool.close.assert_awaited_once()
-    assert not api_module._pools
 
 
-def test_http_failure_is_fatal_without_sdk_retries(sdk_transport):
+def test_http_error_propagates_without_sdk_retries(sdk_transport):
     """429 is normally retried by the SDK; rewards must surface it after one request."""
     calls = 0
 
@@ -167,8 +158,6 @@ def test_http_failure_is_fatal_without_sdk_retries(sdk_transport):
     actor = ApiRewardActor(config=_config())
     with pytest.raises(openai.RateLimitError):
         actor.score_batch([_sample(1).generated_output], ["1"])
-    with pytest.raises(RuntimeError, match="stopped after a scoring failure"):
-        actor.score_batch([_sample(2).generated_output], ["2"])
     assert calls == 1
 
 

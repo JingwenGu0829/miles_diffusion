@@ -196,11 +196,9 @@ result ordering, and queue-depth metrics. These actors do not consume colocated
 GPU reward slots; API credentials must be available in their Ray runtime environment.
 
 HTTP errors, timeouts, refusals, malformed responses, and invalid scores propagate
-to fail the training job. A failed or cancelled API scoring call terminates its
-pool, stopping in-flight client calls and discarding queued work. The provider
-may still finish requests it already received. Normal shutdown closes each
-actor's HTTP client before terminating the actors. Requests are not retried,
-and failed scores are not replaced with zero or dropped.
+to fail the training job. Requests are not retried, and failed scores are not
+replaced with zero or dropped. API clients are reused for each actor's lifetime;
+failures do not explicitly cancel other queued or in-flight requests.
 
 To support another API protocol, implement a scorer and an actor exposing
 `score_batch(outputs, prompts)`, then configure `AsyncRewardActorPool` with that

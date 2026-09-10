@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import io
 import json
@@ -11,7 +10,6 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-import ray
 import torch
 import yaml
 from PIL import Image
@@ -142,31 +140,17 @@ class OpenAIImageScorer:
             scores.append(_parse_score(response.choices[0].message.content, self.config))
         return scores
 
-    def close(self) -> None:
-        self.client.close()
-
 
 class ApiRewardActor:
     def __init__(self, *, config: ApiRewardConfig) -> None:
         self.scorer = OpenAIImageScorer(config)
-        self._failed = False
 
     def score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
-        if self._failed:
-            raise RuntimeError("API reward actor stopped after a scoring failure")
-        try:
-            images = []
-            for output in outputs:
-                (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
-                images.append(Image.fromarray(frame))
-            return self.scorer(prompts, images)
-        except Exception:
-            # Queued actor calls can start before the pool learns of the first failure.
-            self._failed = True
-            raise
-
-    def close(self) -> None:
-        self.scorer.close()
+        images = []
+        for output in outputs:
+            (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
+            images.append(Image.fromarray(frame))
+        return self.scorer(prompts, images)
 
 
 class AsyncApiRewardPool(AsyncRewardActorPool):
@@ -182,43 +166,10 @@ class AsyncApiRewardPool(AsyncRewardActorPool):
             colocate=False,
             name=name,
         )
-        self._closed = False
-
-    def abort(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        # ray.cancel cannot interrupt a synchronous actor's in-flight HTTP call.
-        for actor in self._actors:
-            ray.kill(actor, no_restart=True)
-
-    async def score(self, outputs: list, prompts: list[str]) -> tuple[list[float], int]:
-        if self._closed:
-            raise RuntimeError("API reward pool is closed")
-        try:
-            return await super().score(outputs, prompts)
-        except BaseException:
-            self.abort()
-            raise
-
-    async def close(self) -> None:
-        if self._closed:
-            return
-        try:
-            refs = [actor.close.remote() for actor in self._actors]
-            await asyncio.get_running_loop().run_in_executor(None, ray.get, refs)
-        finally:
-            self.abort()
 
 
 # Unlike class singletons, this keeps different models/rubrics/endpoints isolated.
 _pools: dict[str, AsyncApiRewardPool] = {}
-
-
-async def close_api_rm_pools() -> None:
-    pools = list(_pools.values())
-    _pools.clear()
-    await asyncio.gather(*(pool.close() for pool in pools))
 
 
 async def api_rm(args, samples: Sequence[Sample], *, name: str | None = None, **kwargs) -> list[float]:
