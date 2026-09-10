@@ -181,22 +181,24 @@ and within the configured range, then returns it as a float.
 | `prompt` / `prompt_path` | Built-in prompt-adherence rubric | Inline rubric or a text file relative to the YAML; set at most one |
 | `score_min` / `score_max` | `0` / `4` | Accepted score range |
 | `timeout_s` | `60` | Request deadline in seconds |
-| `max_concurrency` | `8` | Zero-GPU Ray actor count; each actor sends one request at a time, shared across microgroups |
+| `max_concurrency` | `8` | Maximum concurrent requests in one zero-GPU Ray actor, shared across microgroups |
 
 For a custom rubric, add `prompt_path: rubric.txt` to the configuration.
 The rubric should request the same JSON `score` field and describe the score
 range. Scores are returned without rescaling.
 
 API rewards reuse `AsyncRewardActorPool` from `rm_hub/core.py`, like OCR and the
-GPU rewards. The singleton pool owns zero-GPU Ray actors. `ApiRewardActor`
+GPU rewards. The singleton pool owns one zero-GPU Ray actor, using Ray's
+`max_concurrency` to run requests in threads. Other reward actors remain serial
+by default. `ApiRewardActor`
 converts rollout tensors to images, and `OpenAIImageScorer` handles the HTTP
 request and score parsing. The shared pool handles batching, worker selection,
-result ordering, and queue-depth metrics. These actors do not consume colocated
-GPU reward slots; API credentials must be available in their Ray runtime environment.
+result ordering, and queue-depth metrics. The API actor does not consume colocated
+GPU reward slots; API credentials must be available in its Ray runtime environment.
 
 HTTP errors, timeouts, refusals, malformed responses, and invalid scores propagate
-to fail the training job. Requests are not retried, and failed scores are not
-replaced with zero or dropped. API clients are reused for each actor's lifetime;
+to fail the training job after applicable SDK retries (up to two retries for transient errors).
+Failed scores are not replaced with zero or dropped. The API client is reused for the actor's lifetime;
 failures do not explicitly cancel other queued or in-flight requests.
 
 To support another API protocol, implement a scorer and an actor exposing

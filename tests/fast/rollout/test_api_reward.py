@@ -19,6 +19,8 @@ import io
 import json
 import pickle
 from argparse import Namespace
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import AsyncMock
 
 import httpx
@@ -100,6 +102,8 @@ def sdk_transport(monkeypatch):
 
 
 def test_actor_preserves_image_prompt_pairing(sdk_transport):
+    requests_started = Barrier(2)
+
     def handler(request):
         payload = json.loads(request.content)
         content = payload["messages"][1]["content"]
@@ -111,13 +115,16 @@ def test_actor_preserves_image_prompt_pairing(sdk_transport):
         assert payload["response_format"]["json_schema"]["strict"] is True
         assert payload["model"] == "judge-v1"
         assert request.headers["authorization"] == "Bearer test-only-secret"
+        requests_started.wait(timeout=5)
         return _response(index)
 
     clients = sdk_transport(handler)
     actor = ApiRewardActor(config=_config())
     samples = [_sample(2), _sample(1)]
-    assert actor.score_batch([s.generated_output for s in samples], [s.prompt for s in samples]) == [2.0, 1.0]
-    assert clients[0]["max_retries"] == 0
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(actor.score_batch, [s.generated_output], [s.prompt]) for s in samples]
+        assert [future.result()[0] for future in futures] == [2.0, 1.0]
+    assert clients[0]["max_retries"] == 2
 
 
 async def test_rm_passes_raw_tensor_and_preserves_pool_results_and_errors(monkeypatch):
@@ -139,20 +146,20 @@ async def test_rm_passes_raw_tensor_and_preserves_pool_results_and_errors(monkey
     assert exc.value is failure
 
 
-def test_http_error_propagates_without_sdk_retries(sdk_transport):
-    """429 is normally retried by the SDK; rewards must surface it after one request."""
+@pytest.mark.parametrize("status, error", [(429, openai.RateLimitError), (503, openai.InternalServerError)])
+def test_http_error_propagates_after_sdk_retries(sdk_transport, status, error):
     calls = 0
 
     def handler(request):
         nonlocal calls
         calls += 1
-        return httpx.Response(429, json={"error": {"message": "test failure"}})
+        return httpx.Response(status, json={"error": {"message": "test failure"}})
 
     sdk_transport(handler)
     actor = ApiRewardActor(config=_config())
-    with pytest.raises(openai.RateLimitError):
+    with pytest.raises(error):
         actor.score_batch([_sample(1).generated_output], ["1"])
-    assert calls == 1
+    assert calls == 3
 
 
 @pytest.mark.parametrize(
@@ -234,7 +241,7 @@ def test_multiple_api_configs_are_rejected(tmp_path):
         load_api_rm_config(str(path))
 
 
-def test_zero_api_workers_is_rejected_at_startup(tmp_path):
+def test_zero_api_concurrency_is_rejected_at_startup(tmp_path):
     from miles.utils.arguments import load_api_rm_config
 
     path = tmp_path / "rm.yaml"

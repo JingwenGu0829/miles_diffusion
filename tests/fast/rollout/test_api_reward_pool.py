@@ -1,6 +1,6 @@
 """API pool worker configuration, without starting Ray or an HTTP server.
 
-Mental model: max_concurrency=2 -> two zero-GPU actors, one request per actor call.
+Mental model: max_concurrency=2 -> one zero-GPU actor handling up to two requests concurrently.
 The shared pool's placement rules are covered by test_reward_pool_placement.py.
 """
 
@@ -9,14 +9,14 @@ from tests.ci.ci_register import register_cpu_ci
 register_cpu_ci(est_time=5, suite="stage-a-cpu", labels=[])
 
 from argparse import Namespace
-from unittest.mock import Mock, call
+from unittest.mock import Mock
 
 import miles.rollout.rm_hub.core as core_module
 from miles.rollout.rm_hub.api import ApiRewardActor, AsyncApiRewardPool
 from miles.utils.api_rm_config import ApiRewardConfig
 
 
-def test_pool_reuses_configured_zero_gpu_workers(monkeypatch):
+def test_pool_reuses_one_concurrent_zero_gpu_worker(monkeypatch):
     monkeypatch.setattr(AsyncApiRewardPool, "_instances", {})
     actor_cls = Mock()
     actor_cls.options.return_value = actor_cls
@@ -28,9 +28,7 @@ def test_pool_reuses_configured_zero_gpu_workers(monkeypatch):
     pool = AsyncApiRewardPool(args)
     assert AsyncApiRewardPool(args) is pool
 
-    assert remote.call_args_list == [call(ApiRewardActor)] * 2
-    assert (
-        remote.return_value.options.call_args_list == [call(num_cpus=0, num_gpus=0, scheduling_strategy="DEFAULT")] * 2
-    )
-    assert remote.return_value.remote.call_args_list == [call(config=config)] * 2
+    remote.assert_called_once_with(ApiRewardActor)
+    actor_cls.options.assert_called_once_with(num_cpus=0, num_gpus=0, scheduling_strategy="DEFAULT", max_concurrency=2)
+    actor_cls.remote.assert_called_once_with(config=config)
     assert pool._batch_size == 1

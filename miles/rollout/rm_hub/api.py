@@ -60,7 +60,7 @@ class OpenAIImageScorer:
             api_key=os.environ[config.api_key_env],
             base_url=config.base_url,
             timeout=config.timeout_s,
-            max_retries=0,
+            max_retries=2,
         )
 
     def __call__(self, prompts: Sequence[str], images: Sequence[Image.Image]) -> list[float]:
@@ -97,7 +97,7 @@ class ApiRewardActor:
 
 
 class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
-    """Ray actor pool for API rewards; each zero-GPU actor sends one request at a time."""
+    """API reward pool with one zero-GPU actor handling concurrent HTTP requests."""
 
     def __init__(self, args) -> None:
         config = args._api_rm_config
@@ -106,11 +106,12 @@ class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
         super().__init__(
             actor_cls=ApiRewardActor,
             actor_kwargs={"config": config},
-            num_workers=config.max_concurrency,
+            num_workers=1,
             batch_size=1,
             num_gpus_per_worker=0,
             colocate=False,
             name="api",
+            actor_max_concurrency=config.max_concurrency,
         )
 
 
