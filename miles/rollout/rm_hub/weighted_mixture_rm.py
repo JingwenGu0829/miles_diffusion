@@ -53,9 +53,6 @@ async def weighted_mixture_rm(args, samples: Sequence[Sample], **kwargs) -> list
             f"{[name for name, _ in weights]}), got {args.reward_key!r}"
         )
     per_reward = await asyncio.gather(*(_REWARDS[name](args, samples) for name, _ in weights))
-    for (name, _), scores in zip(weights, per_reward, strict=True):
-        if len(scores) != len(samples):
-            raise ValueError(f"Reward {name!r} returned {len(scores)} scores for {len(samples)} samples")
     rewards = []
     for i in range(len(samples)):
         components = {name: scores[i] for (name, _), scores in zip(weights, per_reward, strict=True)}

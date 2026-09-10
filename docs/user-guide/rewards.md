@@ -155,11 +155,14 @@ Each training job uses one fixed API reward configuration and one pool, includin
 for evaluation. Multiple API models or scoring rubrics in the same job are not
 supported. To use a different API metric, change the configuration for a new job.
 
-The launcher helper `execute_train` forwards the named environment variable
-to Ray's runtime environment. If submitting a Ray job yourself, include it in
-that job's `runtime_env.env_vars` so the driver and reward worker can read it.
-The YAML must be readable by the submitting process and training driver; the resolved
-configuration and rubric text are carried with the training arguments.
+Pass the key explicitly through your launch script's `execute_train(...,
+extra_env_vars={"GEMINI_API_KEY": os.environ["GEMINI_API_KEY"]})` (use the variable
+named by `api_key_env`). The launcher does not read the reward YAML or automatically
+forward API keys. The shipped Gemini recipe passes its configured key this way.
+If submitting a Ray job yourself, include the key in that job's
+`runtime_env.env_vars` so the reward worker can read it.
+The YAML must be readable by the training driver; the resolved configuration and
+rubric text are carried with the training arguments.
 
 #### Scoring and configuration
 

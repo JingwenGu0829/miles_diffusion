@@ -116,10 +116,6 @@ class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
 
 async def api_rm(args, samples: Sequence[Sample], **kwargs) -> list[float]:
     pool = AsyncApiRewardPool(args)
-    try:
-        scores, max_queue_depth = await pool.score([s.generated_output for s in samples], [s.prompt for s in samples])
-    except Exception as exc:
-        identities = [(s.index, s.request_id) for s in samples]
-        raise RuntimeError(f"API reward failed for samples (index, request_id)={identities}: {exc}") from exc
+    scores, max_queue_depth = await pool.score([s.generated_output for s in samples], [s.prompt for s in samples])
     record_reward_queue_depth(samples, "api", max_queue_depth)
     return scores

@@ -120,7 +120,7 @@ def test_actor_preserves_image_prompt_pairing(sdk_transport):
     assert clients[0]["max_retries"] == 0
 
 
-async def test_rm_passes_raw_tensor_and_records_queue_depth(monkeypatch):
+async def test_rm_passes_raw_tensor_and_preserves_pool_results_and_errors(monkeypatch):
     pool = AsyncMock()
     pool.score.return_value = ([1.0], 3)
     monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda args: pool)
@@ -131,6 +131,12 @@ async def test_rm_passes_raw_tensor_and_records_queue_depth(monkeypatch):
     assert output is sample.generated_output
     assert prompts == [sample.prompt]
     assert sample.reward_max_queue_depth == {"api": 3.0}
+
+    failure = ValueError("Invalid API score")
+    pool.score.side_effect = failure
+    with pytest.raises(ValueError) as exc:
+        await api_rm(args, [sample])
+    assert exc.value is failure
 
 
 def test_http_error_propagates_without_sdk_retries(sdk_transport):

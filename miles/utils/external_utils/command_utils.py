@@ -2,7 +2,6 @@
 This file is not for miles framework itself, but as an optional utility to easily launch miles jobs and tests.
 """
 
-import argparse
 import datetime
 import json
 import os
@@ -11,8 +10,6 @@ import shlex
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-
-import yaml
 
 from miles.utils.misc import exec_command
 from miles.utils.typer_utils import dataclass_cli
@@ -70,7 +67,6 @@ def execute_train(
     """
     if config is None:
         config = ExecuteTrainConfig()
-    api_rm_env_vars = _api_rm_env_vars(train_args)
     if not os.path.isabs(train_script):
         train_script = f"{repo_base_dir}/{train_script}"
     external_ray = get_bool_env_var("MILES_SCRIPT_EXTERNAL_RAY")
@@ -131,7 +127,6 @@ def execute_train(
         ),
         **(extra_env_vars or {}),
         **_parse_extra_env_vars(config.extra_env_vars),
-        **api_rm_env_vars,
     }
     runtime_env_vars["PYTHONPATH"] = _pythonpath_with_sources(runtime_env_vars.get("PYTHONPATH"))
     if not get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
@@ -148,20 +143,6 @@ def execute_train(
             f"--runtime-env={shlex.quote(runtime_env_file.name)} "
             f"-- python3 {shlex.quote(train_script)} {train_args}"
         )
-
-
-def _api_rm_env_vars(train_args: str) -> dict[str, str]:
-    """Forward the API key environment variable named by --api-rm-config."""
-    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    parser.add_argument("--api-rm-config")
-    args, _ = parser.parse_known_args(shlex.split(train_args))
-    if not args.api_rm_config:
-        return {}
-
-    # Only forward credentials here; the training driver validates the reward configuration.
-    config = yaml.safe_load(Path(args.api_rm_config).read_text())
-    key_env = config["api_key_env"]
-    return {key_env: os.environ[key_env]}
 
 
 def _pythonpath_with_sources(*additional_pythonpaths: str | None) -> str:

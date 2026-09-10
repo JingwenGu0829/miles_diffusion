@@ -137,6 +137,7 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
                 "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                 "PYTHONPATH": MASTER_SGLANG_PYTHON,
                 "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+                api_rm_config["api_key_env"]: os.environ[api_rm_config["api_key_env"]],
                 **({"MILES_VERIFY_WEIGHT_SYNC": "1"} if args.debug_alignment else {}),
             },
         )

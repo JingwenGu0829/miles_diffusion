@@ -219,6 +219,7 @@ The API configuration is inline in the script's `api_rm_config` dictionary.
 Set its `model` field to a Gemini model available to your account; the endpoint,
 key environment variable, timeout, and concurrency are configured alongside it.
 The script writes a temporary YAML for `--api-rm-config` when submitting the job.
+It explicitly passes the configured API key to Ray through `extra_env_vars`.
 The recipe uses `--custom-rm-args hps=0.7,api=0.3 --reward-key weighted` to train
 on the sum and logs the components as `hps` and `api`.
 See [Rewards](../../user-guide/rewards.md) for the shared OpenAI/Gemini API
