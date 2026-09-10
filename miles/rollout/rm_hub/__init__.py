@@ -1,9 +1,8 @@
+import asyncio
 from functools import partial
 
 from miles.utils.misc import load_function
 from miles.utils.types import Sample
-
-from .core import gather_rewards
 
 BUILTIN_REWARDS = {
     "ocr": "miles.rollout.rm_hub.ocr.ocr_rm",
@@ -63,4 +62,4 @@ async def batched_async_rm(
             rm_function = resolve_reward(args, rm_types[0])
             return await rm_function(args, samples)
 
-    return await gather_rewards(*(async_rm(args, sample, **kwargs) for sample in samples))
+    return await asyncio.gather(*(async_rm(args, sample, **kwargs) for sample in samples))

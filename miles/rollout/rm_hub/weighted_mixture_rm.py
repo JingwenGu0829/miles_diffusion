@@ -19,13 +19,13 @@ whose scales differ: HPSv2.1 ~0.3, PickScore/26 ~0.85, OCR in [0, 1], default AP
 API rewards use their YAML settings and do not consume local GPU reward slots.
 """
 
+import asyncio
 from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
 from . import BUILTIN_REWARDS, resolve_reward
 from .api import get_api_rm_configs
-from .core import gather_rewards
 
 
 def parse_weights(custom_rm_args: str, api_names: Sequence[str] = ()) -> list[tuple[str, float]]:
@@ -50,7 +50,7 @@ async def weighted_mixture_rm(args, samples: Sequence[Sample], **kwargs) -> list
             f"{[name for name, _ in weights]}), got {args.reward_key!r}"
         )
     rm_functions = [resolve_reward(args, name) for name, _ in weights]
-    per_reward = await gather_rewards(*(rm_function(args, samples) for rm_function in rm_functions))
+    per_reward = await asyncio.gather(*(rm_function(args, samples) for rm_function in rm_functions))
     for (name, _), scores in zip(weights, per_reward, strict=True):
         if len(scores) != len(samples):
             raise ValueError(f"Reward {name!r} returned {len(scores)} scores for {len(samples)} samples")

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
 
-from .core import AsyncRewardActorPool, gather_rewards, record_reward_queue_depth
+from .core import AsyncRewardActorPool, record_reward_queue_depth
 
 # Inspired by Customized-GRPO's prompt-following rubric (arXiv:2510.18263,
 # Appendix C). We use a JSON score instead of extracting numbers from prose.
@@ -218,7 +218,7 @@ _pools: dict[str, AsyncApiRewardPool] = {}
 async def close_api_rm_pools() -> None:
     pools = list(_pools.values())
     _pools.clear()
-    await gather_rewards(*(pool.close() for pool in pools))
+    await asyncio.gather(*(pool.close() for pool in pools))
 
 
 async def api_rm(args, samples: Sequence[Sample], *, name: str | None = None, **kwargs) -> list[float]:
