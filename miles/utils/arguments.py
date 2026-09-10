@@ -1834,6 +1834,8 @@ def miles_validate_args(args):
 
         # Resolve prompt files before args cross the Ray process or node boundary.
         args._api_rm_configs = load_api_rm_configs(args.api_rm_config)
+    else:
+        args._api_rm_configs = {}
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path

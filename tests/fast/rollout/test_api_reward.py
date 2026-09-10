@@ -35,7 +35,6 @@ from miles.rollout.rm_hub.api import (
     ApiRewardConfig,
     _parse_score,
     api_rm,
-    get_api_rm_configs,
     load_api_rm_configs,
 )
 from miles.utils.types import Sample
@@ -214,11 +213,11 @@ def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path
             }
         )
     )
-    args = Namespace(api_rm_config=str(config_path))
-    get_api_rm_configs(args)
-    assert get_api_rm_configs(args)["judge"].model == "judge-version-123"
+    args = Namespace(api_rm_config=str(config_path), _api_rm_configs=load_api_rm_configs(str(config_path)))
+    args = pickle.loads(pickle.dumps(args))
+    assert args._api_rm_configs["judge"].model == "judge-version-123"
     (tmp_path / "rubric.txt").unlink()
-    assert "0 to 10" in get_api_rm_configs(args)["judge"].prompt
+    assert "0 to 10" in args._api_rm_configs["judge"].prompt
     assert b"test-only-secret" not in pickle.dumps(args)
 
 

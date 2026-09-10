@@ -83,14 +83,6 @@ def load_api_rm_configs(path: str) -> dict[str, ApiRewardConfig]:
     return configs
 
 
-def get_api_rm_configs(args) -> dict[str, ApiRewardConfig]:
-    configs = getattr(args, "_api_rm_configs", None)
-    if configs is None:
-        configs = load_api_rm_configs(args.api_rm_config) if args.api_rm_config else {}
-        args._api_rm_configs = configs
-    return configs
-
-
 def _encode_image(image: Image.Image) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -174,7 +166,7 @@ _pools: dict[str, AsyncApiRewardPool] = {}
 
 async def api_rm(args, samples: Sequence[Sample], *, name: str | None = None, **kwargs) -> list[float]:
     name = name or args.rm_type
-    config = get_api_rm_configs(args)[name]
+    config = args._api_rm_configs[name]
     if name not in _pools:
         _pools[name] = AsyncApiRewardPool(name, config)
     pool = _pools[name]

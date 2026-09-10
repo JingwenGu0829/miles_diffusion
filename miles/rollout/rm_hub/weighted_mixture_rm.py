@@ -24,7 +24,7 @@ from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
-from .api import api_rm, get_api_rm_configs
+from .api import api_rm
 from .hps import hps_rm
 from .ocr import ocr_rm
 from .pickscore import pickscore_rm
@@ -47,7 +47,7 @@ def parse_weights(custom_rm_args: str, api_names: Sequence[str] = ()) -> list[tu
 
 
 async def weighted_mixture_rm(args, samples: Sequence[Sample], **kwargs) -> list[dict[str, float]]:
-    weights = parse_weights(args.custom_rm_args, tuple(get_api_rm_configs(args)))
+    weights = parse_weights(args.custom_rm_args, tuple(args._api_rm_configs))
     if args.reward_key not in {name for name, _ in weights} | {"weighted"}:
         raise ValueError(
             f"weighted_mixture_rm returns a dict per sample; pass --reward-key weighted (or one of "
