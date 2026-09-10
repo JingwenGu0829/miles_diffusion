@@ -182,17 +182,30 @@ and within the configured range, then returns it as a float.
 | `prompt` / `prompt_path` | Built-in prompt-adherence rubric | Inline rubric or a text file relative to the YAML; set at most one |
 | `score_min` / `score_max` | `0` / `4` | Accepted score range |
 | `timeout_s` | `60` | Request deadline in seconds |
-| `max_concurrency` | `8` | Concurrent requests per configured reward, shared across microgroups |
+| `max_concurrency` | `8` | Zero-GPU Ray actor count per alias; each actor sends one request at a time, shared across microgroups |
 
 For a custom rubric, add `prompt_path: rubric.txt` to the alias's configuration.
 The rubric should request the same JSON `score` field and describe the score
 range. Scores are returned without rescaling.
 
-API rewards make HTTP requests from the rollout worker and do not create a local
-GPU reward pool or consume colocated reward slots. Missing or empty keys fail
-during startup. HTTP errors, timeouts, refusals, malformed responses, and invalid
-scores propagate to fail the training job. Requests are not retried, and failed
-scores are not replaced with zero or dropped.
+API rewards reuse `AsyncRewardActorPool` from `rm_hub/core.py`, like OCR and the
+GPU rewards. Each alias owns a pool of zero-GPU Ray actors. `ApiRewardActor`
+converts rollout tensors to images, and `OpenAIImageScorer` handles the HTTP
+request and score parsing. The shared pool handles batching, worker selection,
+result ordering, and queue-depth metrics. These actors do not consume colocated
+GPU reward slots; API credentials must be available in their Ray runtime environment.
+
+HTTP errors, timeouts, refusals, malformed responses, and invalid scores propagate
+to fail the training job. A failed or cancelled API scoring call terminates its
+pool, stopping in-flight client calls and discarding queued work. The provider
+may still finish requests it already received. Normal shutdown closes each
+actor's HTTP client before terminating the actors. Requests are not retried,
+and failed scores are not replaced with zero or dropped.
+
+To support another API protocol, implement a scorer and an actor exposing
+`score_batch(outputs, prompts)`, then configure `AsyncRewardActorPool` with that
+actor and zero GPUs, and provide an async RM function. The existing pool's
+dispatch logic can be reused without changing the OpenAI-compatible scorer.
 
 A standalone API reward returns one float per sample, so leave `--reward-key`
 unset. To combine it with local rewards, use the example below.

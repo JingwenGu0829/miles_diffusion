@@ -1,15 +1,15 @@
-"""API reward contract: real SDK serialization, ordered scores, and fatal failures."""
+"""API scorer serialization, validation, and the shared reward dispatch contract."""
 
 from tests.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=10, suite="stage-a-cpu", labels=[])
 
-import asyncio
 import base64
 import io
 import json
 import pickle
 from argparse import Namespace
+from unittest.mock import AsyncMock
 
 import httpx
 import openai
@@ -19,11 +19,13 @@ import torch
 import yaml
 from PIL import Image
 
+import miles.rollout.rm_hub.api as api_module
 from miles.rollout.rm_hub import batched_async_rm
 from miles.rollout.rm_hub.api import (
+    ApiRewardActor,
     ApiRewardConfig,
     api_rm,
-    close_api_rm_clients,
+    close_api_rm_pools,
     get_api_rm_configs,
     load_api_rm_configs,
 )
@@ -42,7 +44,7 @@ def _sample(index):
     return Sample(index=index, prompt=str(index), generated_output=torch.full((3, 1, 8, 8), index / 4))
 
 
-def _response(score=1, *, content=None, **kwargs):
+def _response(score=1, *, content=None):
     return httpx.Response(
         200,
         json={
@@ -62,7 +64,6 @@ def _response(score=1, *, content=None, **kwargs):
                 }
             ],
         },
-        **kwargs,
     )
 
 
@@ -70,33 +71,31 @@ def _response(score=1, *, content=None, **kwargs):
 async def _cleanup(monkeypatch):
     monkeypatch.setenv("TEST_RM_KEY", "test-only-secret")
     yield
-    await close_api_rm_clients()
+    await close_api_rm_pools()
 
 
 @pytest.fixture
 def sdk_transport(monkeypatch):
-    original = openai.AsyncOpenAI
-    created = []
+    original = openai.OpenAI
+    created, clients = [], []
 
     def install(handler):
         def factory(**kwargs):
             created.append(kwargs)
-            return original(**kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+            client = original(**kwargs, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+            clients.append(client)
+            return client
 
-        monkeypatch.setattr(openai, "AsyncOpenAI", factory)
+        monkeypatch.setattr(openai, "OpenAI", factory)
         return created
 
-    return install
+    yield install
+    for client in clients:
+        client.close()
 
 
-async def test_order_image_identity_and_shared_concurrency_across_microgroups(sdk_transport):
-    active = peak = 0
-    completed = []
-
-    async def handler(request):
-        nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
+def test_actor_preserves_image_prompt_pairing_and_closes_client(sdk_transport):
+    def handler(request):
         payload = json.loads(request.content)
         content = payload["messages"][1]["content"]
         index = int(content[0]["text"])
@@ -107,64 +106,45 @@ async def test_order_image_identity_and_shared_concurrency_across_microgroups(sd
         assert payload["response_format"]["json_schema"]["strict"] is True
         assert payload["model"] == "judge-v1"
         assert request.headers["authorization"] == "Bearer test-only-secret"
-        await asyncio.sleep(0.05 if index == 0 else 0.005)
-        completed.append(index)
-        active -= 1
         return _response(index)
 
     clients = sdk_transport(handler)
-    args = _args(judge=_config(max_concurrency=2))
-    first, second = await asyncio.gather(
-        api_rm(args, [_sample(0), _sample(1)]),
-        api_rm(args, [_sample(2), _sample(3)]),
-    )
-    assert first == [0.0, 1.0]
-    assert second == [2.0, 3.0]
-    assert completed[0] != 0
-    assert peak == 2
-    assert len(clients) == 1
+    actor = ApiRewardActor(config=_config())
+    samples = [_sample(2), _sample(1)]
+    assert actor.score_batch([s.generated_output for s in samples], [s.prompt for s in samples]) == [2.0, 1.0]
     assert clients[0]["max_retries"] == 0
+    actor.close()
+    assert actor.scorer.client.is_closed()
 
 
-async def test_all_local_rewards_mix_with_two_api_configs_without_crossing_samples(monkeypatch, sdk_transport):
-    import miles.rollout.rm_hub.weighted_mixture_rm as mixture
+async def test_rm_reuses_pools_by_alias_and_records_queue_depth(monkeypatch):
+    created = {}
 
-    async def local(args, samples):
-        return [sample.index / 10 for sample in samples]
+    def make_pool(name, config):
+        pool = AsyncMock()
+        pool.score.return_value = ([1.0], 3 if name == "judge" else 2)
+        assert name not in created
+        created[name] = pool
+        return pool
 
-    monkeypatch.setattr(mixture, "_REWARDS", {name: local for name in ("hps", "pickscore", "ocr")})
-    seen = set()
-
-    async def handler(request):
-        payload = json.loads(request.content)
-        model = payload["model"]
-        index = int(payload["messages"][1]["content"][0]["text"])
-        seen.add((str(request.url), model))
-        await asyncio.sleep(0.01 if index == 1 else 0)
-        return _response(index if model == "gpt-test" else 4 - index)
-
-    sdk_transport(handler)
-    args = _args(
-        openai=_config().model_copy(update={"model": "gpt-test"}),
-        gemini=_config(base_url="https://generativelanguage.googleapis.com/v1beta/openai/").model_copy(
-            update={"model": "gemini-test"}
-        ),
-    )
-    args.custom_rm_args = "hps=0.2,pickscore=0.3,ocr=0.4,openai=0.5,gemini=0.6"
-    args.reward_key = "weighted"
-    rewards = await mixture.weighted_mixture_rm(args, [_sample(1), _sample(2)])
-    for index, reward in zip((1, 2), rewards, strict=True):
-        assert reward["openai"] == index
-        assert reward["gemini"] == 4 - index
-        assert reward["weighted"] == pytest.approx(0.9 * index / 10 + 0.5 * index + 0.6 * (4 - index))
-    assert seen == {
-        ("https://api.openai.com/v1/chat/completions", "gpt-test"),
-        ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini-test"),
-    }
+    monkeypatch.setattr(api_module, "AsyncApiRewardPool", make_pool)
+    args = _args(judge=_config(), other=_config())
+    sample = _sample(1)
+    for name in ("judge", "other", "judge"):
+        assert await api_rm(args, [sample], name=name) == [1.0]
+    assert created["judge"].score.await_count == 2
+    (output,), prompts = created["judge"].score.await_args.args
+    assert output is sample.generated_output
+    assert prompts == [sample.prompt]
+    assert sample.reward_max_queue_depth == {"judge": 3.0, "other": 2.0}
+    await close_api_rm_pools()
+    for pool in created.values():
+        pool.close.assert_awaited_once()
+    assert not api_module._pools
 
 
 @pytest.mark.parametrize("status", [400, 401, 429, 500, 503])
-async def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
+def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
     calls = 0
 
     def handler(request):
@@ -173,8 +153,11 @@ async def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
         return httpx.Response(status, json={"error": {"message": "test failure"}})
 
     sdk_transport(handler)
-    with pytest.raises(RuntimeError, match="sample index=1"):
-        await api_rm(_args(judge=_config()), [_sample(1)])
+    actor = ApiRewardActor(config=_config())
+    with pytest.raises(openai.APIStatusError):
+        actor.score_batch([_sample(1).generated_output], ["1"])
+    with pytest.raises(RuntimeError, match="stopped after a scoring failure"):
+        actor.score_batch([_sample(2).generated_output], ["2"])
     assert calls == 1
 
 
@@ -193,48 +176,28 @@ async def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
         {"score": 5},
     ],
 )
-async def test_invalid_or_incomplete_response_never_becomes_a_reward(response_kwargs, sdk_transport):
+def test_invalid_response_never_becomes_a_reward(response_kwargs, sdk_transport):
     sdk_transport(lambda request: _response(**response_kwargs))
-    with pytest.raises(RuntimeError):
-        await api_rm(_args(judge=_config()), [_sample(1)])
-
-
-async def test_failure_cancels_other_requests(sdk_transport):
-    started = asyncio.Event()
-    cancelled = asyncio.Event()
-
-    async def handler(request):
-        index = json.loads(request.content)["messages"][1]["content"][0]["text"]
-        if index == "1":
-            await started.wait()
-            return httpx.Response(500, json={"error": {"message": "failed"}})
-        started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
-
-    sdk_transport(handler)
-    with pytest.raises(RuntimeError):
-        await api_rm(_args(judge=_config()), [_sample(1), _sample(2)])
-    assert cancelled.is_set()
+    actor = ApiRewardActor(config=_config())
+    with pytest.raises((ValueError, KeyError, TypeError)):
+        actor.score_batch([_sample(1).generated_output], ["1"])
 
 
 @pytest.mark.parametrize("output", [None, torch.zeros(3, 2, 8, 8), torch.zeros(1, 16000)])
-async def test_unsupported_media_fails_before_http(output, sdk_transport):
+def test_unsupported_media_fails_before_http(output, sdk_transport):
     def handler(request):
         pytest.fail("Unsupported media must not be sent to the API")
 
     sdk_transport(handler)
-    sample = _sample(1)
-    sample.generated_output = output
-    with pytest.raises(RuntimeError):
-        await api_rm(_args(judge=_config()), [sample])
+    actor = ApiRewardActor(config=_config())
+    with pytest.raises((AttributeError, ValueError)):
+        actor.score_batch([output], ["1"])
 
 
-async def test_builtin_dispatch_and_per_sample_override(sdk_transport):
-    sdk_transport(lambda request: _response(int(json.loads(request.content)["messages"][1]["content"][0]["text"])))
+async def test_builtin_dispatch_and_per_sample_override(monkeypatch):
+    pool = AsyncMock()
+    pool.score.side_effect = [([1.0, 2.0], 0), ([3.0], 0)]
+    monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda name, config: pool)
     args = _args(judge=_config())
     assert await batched_async_rm(args, [_sample(1), _sample(2)]) == [1.0, 2.0]
     args.rm_type = "unused"
@@ -266,13 +229,7 @@ def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path
     assert b"test-only-secret" not in pickle.dumps(args)
 
 
-@pytest.mark.parametrize(
-    "entry",
-    [
-        {"max_concurrency": 0},
-        {"api_key": "not-allowed"},
-    ],
-)
+@pytest.mark.parametrize("entry", [{"max_concurrency": 0}, {"api_key": "not-allowed"}])
 def test_invalid_config_is_rejected(tmp_path, entry):
     path = tmp_path / "rm.yaml"
     path.write_text(yaml.safe_dump({"judge": {"model": "judge", "api_key_env": "TEST_RM_KEY", **entry}}))

@@ -11,12 +11,16 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+import ray
+import torch
 import yaml
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
+
+from .core import AsyncRewardActorPool, gather_rewards, record_reward_queue_depth
 
 # Inspired by Customized-GRPO's prompt-following rubric (arXiv:2510.18263,
 # Appendix C). We use a JSON score instead of extracting numbers from prose.
@@ -89,10 +93,9 @@ def get_api_rm_configs(args) -> dict[str, ApiRewardConfig]:
     return configs
 
 
-def _encode_image(sample: Sample) -> str:
-    (frame,) = generated_output_to_rgb_hwc_uint8_frames(sample.generated_output, None, round_normalized=True)
+def _encode_image(image: Image.Image) -> str:
     buffer = io.BytesIO()
-    Image.fromarray(frame).save(buffer, format="PNG")
+    image.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
@@ -105,67 +108,129 @@ def _parse_score(content: str, config: ApiRewardConfig) -> float:
     return float(score)
 
 
-class ApiRewardClient:
-    def __init__(self, name: str, config: ApiRewardConfig):
-        from openai import AsyncOpenAI
+class OpenAIImageScorer:
+    """Score prompt/image pairs using the OpenAI-compatible Chat Completions API."""
 
-        self.name = name
+    def __init__(self, config: ApiRewardConfig):
+        from openai import OpenAI
+
         self.config = config
-        self.client = AsyncOpenAI(
+        self.client = OpenAI(
             api_key=os.environ[config.api_key_env],
             base_url=config.base_url,
             timeout=config.timeout_s,
             max_retries=0,
         )
-        self.semaphore = asyncio.Semaphore(config.max_concurrency)
 
-    async def score_one(self, sample: Sample) -> float:
+    def __call__(self, prompts: Sequence[str], images: Sequence[Image.Image]) -> list[float]:
+        scores = []
+        for prompt, image in zip(prompts, images, strict=True):
+            response = self.client.chat.completions.create(
+                model=self.config.model,
+                messages=[
+                    {"role": "system", "content": self.config.prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": _encode_image(image)}},
+                        ],
+                    },
+                ],
+                response_format=_RESPONSE_FORMAT,
+            )
+            scores.append(_parse_score(response.choices[0].message.content, self.config))
+        return scores
+
+    def close(self) -> None:
+        self.client.close()
+
+
+class ApiRewardActor:
+    def __init__(self, *, config: ApiRewardConfig) -> None:
+        self.scorer = OpenAIImageScorer(config)
+        self._failed = False
+
+    def score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
+        if self._failed:
+            raise RuntimeError("API reward actor stopped after a scoring failure")
         try:
-            async with self.semaphore:
-                image_url = await asyncio.to_thread(_encode_image, sample)
-                response = await self.client.chat.completions.create(
-                    model=self.config.model,
-                    messages=[
-                        {"role": "system", "content": self.config.prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": sample.prompt},
-                                {"type": "image_url", "image_url": {"url": image_url}},
-                            ],
-                        },
-                    ],
-                    response_format=_RESPONSE_FORMAT,
-                )
-                return _parse_score(response.choices[0].message.content, self.config)
-        except Exception as exc:
-            raise RuntimeError(
-                f"API reward {self.name!r} failed for sample index={sample.index}, "
-                f"request_id={sample.request_id}: {exc}"
-            ) from exc
+            images = []
+            for output in outputs:
+                (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
+                images.append(Image.fromarray(frame))
+            return self.scorer(prompts, images)
+        except Exception:
+            # Queued actor calls can start before the pool learns of the first failure.
+            self._failed = True
+            raise
+
+    def close(self) -> None:
+        self.scorer.close()
 
 
-_clients: dict[str, ApiRewardClient] = {}
+class AsyncApiRewardPool(AsyncRewardActorPool):
+    """One synchronous HTTP request per zero-GPU actor; shared across microgroups."""
+
+    def __init__(self, name: str, config: ApiRewardConfig) -> None:
+        super().__init__(
+            actor_cls=ApiRewardActor,
+            actor_kwargs={"config": config},
+            num_workers=config.max_concurrency,
+            batch_size=1,
+            num_gpus_per_worker=0,
+            colocate=False,
+            name=name,
+        )
+        self._closed = False
+
+    def abort(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        # ray.cancel cannot interrupt a synchronous actor's in-flight HTTP call.
+        for actor in self._actors:
+            ray.kill(actor, no_restart=True)
+
+    async def score(self, outputs: list, prompts: list[str]) -> tuple[list[float], int]:
+        if self._closed:
+            raise RuntimeError("API reward pool is closed")
+        try:
+            return await super().score(outputs, prompts)
+        except BaseException:
+            self.abort()
+            raise
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            refs = [actor.close.remote() for actor in self._actors]
+            await asyncio.get_running_loop().run_in_executor(None, ray.get, refs)
+        finally:
+            self.abort()
 
 
-async def close_api_rm_clients() -> None:
-    clients = list(_clients.values())
-    _clients.clear()
-    await asyncio.gather(*(client.client.close() for client in clients))
+# Unlike class singletons, this keeps different models/rubrics/endpoints isolated.
+_pools: dict[str, AsyncApiRewardPool] = {}
+
+
+async def close_api_rm_pools() -> None:
+    pools = list(_pools.values())
+    _pools.clear()
+    await gather_rewards(*(pool.close() for pool in pools))
 
 
 async def api_rm(args, samples: Sequence[Sample], *, name: str | None = None, **kwargs) -> list[float]:
     name = name or args.rm_type
     config = get_api_rm_configs(args)[name]
-    if name not in _clients:
-        _clients[name] = ApiRewardClient(name, config)
-    client = _clients[name]
-
-    tasks = [asyncio.create_task(client.score_one(sample)) for sample in samples]
+    if name not in _pools:
+        _pools[name] = AsyncApiRewardPool(name, config)
+    pool = _pools[name]
     try:
-        return await asyncio.gather(*tasks)
-    except BaseException:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
+        scores, max_queue_depth = await pool.score([s.generated_output for s in samples], [s.prompt for s in samples])
+    except Exception as exc:
+        identities = [(s.index, s.request_id) for s in samples]
+        raise RuntimeError(f"API reward {name!r} failed for samples (index, request_id)={identities}: {exc}") from exc
+    record_reward_queue_depth(samples, name, max_queue_depth)
+    return scores

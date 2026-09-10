@@ -19,17 +19,13 @@ whose scales differ: HPSv2.1 ~0.3, PickScore/26 ~0.85, OCR in [0, 1], default AP
 API rewards use their YAML settings and do not consume local GPU reward slots.
 """
 
-import asyncio
 from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
-from .api import api_rm, get_api_rm_configs
-from .hps import hps_rm
-from .ocr import ocr_rm
-from .pickscore import pickscore_rm
-
-_REWARDS = {"hps": hps_rm, "pickscore": pickscore_rm, "ocr": ocr_rm}
+from . import BUILTIN_REWARDS, resolve_reward
+from .api import get_api_rm_configs
+from .core import gather_rewards
 
 
 def parse_weights(custom_rm_args: str, api_names: Sequence[str] = ()) -> list[tuple[str, float]]:
@@ -37,10 +33,10 @@ def parse_weights(custom_rm_args: str, api_names: Sequence[str] = ()) -> list[tu
     # launch scripts hand the arg string to `sh`, where ";" would end the command; "," is inert
     for term in custom_rm_args.split(","):
         name, _, weight = term.strip().partition("=")
-        if name not in _REWARDS and name not in api_names:
+        if name not in BUILTIN_REWARDS and name not in api_names:
             raise ValueError(
                 f"--custom-rm-args: unknown reward {name!r} in {custom_rm_args!r}; "
-                f"choose from {(*_REWARDS, *api_names)}"
+                f"choose from {(*BUILTIN_REWARDS, *api_names)}"
             )
         weights.append((name, float(weight)))
     return weights
@@ -53,12 +49,8 @@ async def weighted_mixture_rm(args, samples: Sequence[Sample], **kwargs) -> list
             f"weighted_mixture_rm returns a dict per sample; pass --reward-key weighted (or one of "
             f"{[name for name, _ in weights]}), got {args.reward_key!r}"
         )
-    per_reward = await asyncio.gather(
-        *(
-            _REWARDS[name](args, samples) if name in _REWARDS else api_rm(args, samples, name=name)
-            for name, _ in weights
-        )
-    )
+    rm_functions = [resolve_reward(args, name) for name, _ in weights]
+    per_reward = await gather_rewards(*(rm_function(args, samples) for rm_function in rm_functions))
     for (name, _), scores in zip(weights, per_reward, strict=True):
         if len(scores) != len(samples):
             raise ValueError(f"Reward {name!r} returned {len(scores)} scores for {len(samples)} samples")

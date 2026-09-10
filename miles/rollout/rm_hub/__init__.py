@@ -1,7 +1,27 @@
-import asyncio
+from functools import partial
 
 from miles.utils.misc import load_function
 from miles.utils.types import Sample
+
+from .core import gather_rewards
+
+BUILTIN_REWARDS = {
+    "ocr": "miles.rollout.rm_hub.ocr.ocr_rm",
+    "pickscore": "miles.rollout.rm_hub.pickscore.pickscore_rm",
+    "hps": "miles.rollout.rm_hub.hps.hps_rm",
+}
+
+
+def resolve_reward(args, name: str):
+    """Resolve every reward to the same async callable(args, samples) contract."""
+    if name in BUILTIN_REWARDS:
+        return load_function(BUILTIN_REWARDS[name])
+
+    from .api import api_rm, get_api_rm_configs
+
+    if name in get_api_rm_configs(args):
+        return partial(api_rm, name=name)
+    raise NotImplementedError(f"Rule-based RM for {name!r} is not implemented.")
 
 
 def _resolve_rm_type(args, sample: Sample) -> str:
@@ -10,26 +30,8 @@ def _resolve_rm_type(args, sample: Sample) -> str:
 
 
 async def async_rm(args, sample: Sample, **kwargs):
-    rm_type = _resolve_rm_type(args, sample)
-
-    if rm_type == "ocr":
-        from .ocr import ocr_rm
-
-        return (await ocr_rm(args, [sample]))[0]
-    elif rm_type == "pickscore":
-        from .pickscore import pickscore_rm
-
-        return (await pickscore_rm(args, [sample]))[0]
-    elif rm_type == "hps":
-        from .hps import hps_rm
-
-        return (await hps_rm(args, [sample]))[0]
-    else:
-        from .api import api_rm, get_api_rm_configs
-
-        if rm_type in get_api_rm_configs(args):
-            return (await api_rm(args, [sample], name=rm_type))[0]
-        raise NotImplementedError(f"Rule-based RM for {rm_type!r} is not implemented.")
+    rm_function = resolve_reward(args, _resolve_rm_type(args, sample))
+    return (await rm_function(args, [sample]))[0]
 
 
 def create_colocated_reward_pools(args, placement_group, slots) -> list:
@@ -57,23 +59,8 @@ async def batched_async_rm(
 
     if samples:
         rm_types = [_resolve_rm_type(args, sample) for sample in samples]
-        if all(rm_type == "pickscore" for rm_type in rm_types):
-            from .pickscore import pickscore_rm
+        if len(set(rm_types)) == 1:
+            rm_function = resolve_reward(args, rm_types[0])
+            return await rm_function(args, samples)
 
-            return await pickscore_rm(args, samples)
-        if all(rm_type == "hps" for rm_type in rm_types):
-            from .hps import hps_rm
-
-            return await hps_rm(args, samples)
-        if all(rm_type == "ocr" for rm_type in rm_types):
-            from .ocr import ocr_rm
-
-            return await ocr_rm(args, samples)
-        from .api import api_rm, get_api_rm_configs
-
-        if len(set(rm_types)) == 1 and rm_types[0] in get_api_rm_configs(args):
-            return await api_rm(args, samples, name=rm_types[0])
-
-    tasks = [async_rm(args, sample, **kwargs) for sample in samples]
-    rewards = await asyncio.gather(*tasks)
-    return rewards
+    return await gather_rewards(*(async_rm(args, sample, **kwargs) for sample in samples))

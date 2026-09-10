@@ -13,6 +13,18 @@ from miles.ray.utils import COLOCATED_REWARD_GPU
 logger = logging.getLogger(__name__)
 
 
+async def gather_rewards(*coros):
+    """Preserve reward order and cancel sibling scorers when any component fails."""
+    tasks = [asyncio.create_task(coro) for coro in coros]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 def bundle_deal_order(
     bundle_indices: list[int],
     gpu_ids: list[int],
