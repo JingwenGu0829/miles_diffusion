@@ -35,7 +35,6 @@ from miles.rollout.rm_hub.api import (
     ApiRewardConfig,
     _parse_score,
     api_rm,
-    load_api_rm_configs,
 )
 from miles.utils.types import Sample
 
@@ -199,6 +198,8 @@ async def test_builtin_dispatch_and_per_sample_override(monkeypatch):
 
 
 def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path):
+    from miles.utils.arguments import load_api_rm_configs
+
     (tmp_path / "rubric.txt").write_text("Evaluate prompt adherence from 0 to 10. Return JSON with score.")
     config_path = tmp_path / "rm.yaml"
     config_path.write_text(
@@ -222,14 +223,27 @@ def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path
 
 
 def test_inline_api_key_is_rejected(tmp_path):
+    from miles.utils.arguments import load_api_rm_configs
+
     path = tmp_path / "rm.yaml"
     path.write_text("judge:\n  model: judge\n  api_key_env: TEST_RM_KEY\n  api_key: not-allowed\n")
-    with pytest.raises(ValueError, match="api_key"):
+    with pytest.raises(TypeError, match="api_key"):
         load_api_rm_configs(str(path))
 
 
 def test_api_alias_cannot_shadow_local_reward(tmp_path):
+    from miles.utils.arguments import load_api_rm_configs
+
     path = tmp_path / "rm.yaml"
     path.write_text("hps:\n  model: judge\n  api_key_env: TEST_RM_KEY\n")
     with pytest.raises(ValueError, match="reserved API reward name"):
+        load_api_rm_configs(str(path))
+
+
+def test_zero_api_workers_is_rejected_at_startup(tmp_path):
+    from miles.utils.arguments import load_api_rm_configs
+
+    path = tmp_path / "rm.yaml"
+    path.write_text("judge:\n  model: judge\n  api_key_env: TEST_RM_KEY\n  max_concurrency: 0\n")
+    with pytest.raises(ValueError, match="max_concurrency must be a positive integer"):
         load_api_rm_configs(str(path))

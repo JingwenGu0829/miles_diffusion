@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -1532,6 +1533,28 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
     return eval_datasets
 
 
+def load_api_rm_configs(path: str) -> dict:
+    from miles.rollout.rm_hub.api import ApiRewardConfig
+
+    config_path = Path(path)
+    entries = yaml.safe_load(config_path.read_text())
+    if not isinstance(entries, dict):
+        raise ValueError("--api-rm-config must contain a mapping")
+
+    configs = {}
+    for name, entry in entries.items():
+        if not isinstance(name, str) or not name or name in {"hps", "pickscore", "ocr", "weighted"}:
+            raise ValueError(f"Invalid or reserved API reward name: {name!r}")
+        entry = dict(entry)
+        if prompt_path := entry.pop("prompt_path", None):
+            entry["prompt"] = (config_path.parent / prompt_path).read_text()
+        config = ApiRewardConfig(**entry)
+        if not isinstance(config.max_concurrency, int) or config.max_concurrency <= 0:
+            raise ValueError(f"--api-rm-config: {name}.max_concurrency must be a positive integer")
+        configs[name] = config
+    return configs
+
+
 def set_default_diffusion_args(args) -> None:
     # Prefer TP for multi-GPU engines: SP/CFG-parallel change sampling numerics, so they stay
     # opt-in. (The old default targeted a renamed dest and had silently stopped applying.)
@@ -1830,8 +1853,6 @@ def miles_validate_args(args):
         raise ValueError("--custom-rm-args requires --custom-rm-path.")
 
     if args.api_rm_config:
-        from miles.rollout.rm_hub.api import load_api_rm_configs
-
         # Resolve prompt files before args cross the Ray process or node boundary.
         args._api_rm_configs = load_api_rm_configs(args.api_rm_config)
     else:

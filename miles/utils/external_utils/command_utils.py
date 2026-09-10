@@ -12,6 +12,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from miles.utils.misc import exec_command
 from miles.utils.typer_utils import dataclass_cli
 
@@ -155,12 +157,10 @@ def _api_rm_env_vars(train_args: str) -> dict[str, str]:
     args, _ = parser.parse_known_args(shlex.split(train_args))
     if not args.api_rm_config:
         return {}
-    from miles.rollout.rm_hub.api import load_api_rm_configs
 
-    return {
-        config.api_key_env: os.environ[config.api_key_env]
-        for config in load_api_rm_configs(args.api_rm_config).values()
-    }
+    # Only forward credentials here; the training driver validates the reward configuration.
+    entries = yaml.safe_load(Path(args.api_rm_config).read_text())
+    return {entry["api_key_env"]: os.environ[entry["api_key_env"]] for entry in entries.values()}
 
 
 def _pythonpath_with_sources(*additional_pythonpaths: str | None) -> str:

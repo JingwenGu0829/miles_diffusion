@@ -8,12 +8,10 @@ import json
 import math
 import os
 from collections.abc import Sequence
-from pathlib import Path
+from dataclasses import dataclass
 
 import torch
-import yaml
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field
 
 from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
@@ -49,38 +47,17 @@ _RESPONSE_FORMAT = {
     },
 }
 
-# Names already consumed by built-in dispatch or mixture output.
-_RESERVED_API_RM_NAMES = {"hps", "pickscore", "ocr", "weighted"}
 
-
-class ApiRewardConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+@dataclass
+class ApiRewardConfig:
     model: str
-    base_url: str = "https://api.openai.com/v1"
     api_key_env: str
+    base_url: str = "https://api.openai.com/v1"
     prompt: str = _DEFAULT_PROMPT
     score_min: float = 0.0
     score_max: float = 4.0
     timeout_s: float = 60.0
-    max_concurrency: int = Field(default=8, gt=0)
-
-
-def load_api_rm_configs(path: str) -> dict[str, ApiRewardConfig]:
-    config_path = Path(path)
-    entries = yaml.safe_load(config_path.read_text())
-    if not isinstance(entries, dict):
-        raise ValueError("--api-rm-config must contain a mapping")
-
-    configs = {}
-    for name, entry in entries.items():
-        if not isinstance(name, str) or not name or name in _RESERVED_API_RM_NAMES:
-            raise ValueError(f"Invalid or reserved API reward name: {name!r}")
-        entry = dict(entry)
-        if prompt_path := entry.pop("prompt_path", None):
-            entry["prompt"] = (config_path.parent / prompt_path).read_text()
-        configs[name] = ApiRewardConfig.model_validate(entry)
-    return configs
+    max_concurrency: int = 8
 
 
 def _encode_image(image: Image.Image) -> str:
