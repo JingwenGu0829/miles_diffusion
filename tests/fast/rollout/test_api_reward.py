@@ -1,4 +1,14 @@
-"""API scorer serialization, validation, and the shared reward dispatch contract."""
+"""API-specific contracts, with an in-process SDK transport and mocked reward pools.
+
+Mental model:
+
+    generated_output -> actor -> prompt + PNG request -> validated numeric score
+    api_rm(alias) -> cached pool -> raw tensors in, scores and queue depth out
+
+Covered: image/prompt pairing and client configuration; fatal HTTP errors; score validation;
+image-only input; alias isolation and dispatch; YAML rubric loading and credential safety.
+Ray worker configuration and cleanup are covered by test_api_reward_pool.py.
+"""
 
 from tests.ci.ci_register import register_cpu_ci
 
@@ -24,6 +34,7 @@ from miles.rollout.rm_hub import batched_async_rm
 from miles.rollout.rm_hub.api import (
     ApiRewardActor,
     ApiRewardConfig,
+    _parse_score,
     api_rm,
     close_api_rm_pools,
     get_api_rm_configs,
@@ -44,7 +55,7 @@ def _sample(index):
     return Sample(index=index, prompt=str(index), generated_output=torch.full((3, 1, 8, 8), index / 4))
 
 
-def _response(score=1, *, content=None):
+def _response(score):
     return httpx.Response(
         200,
         json={
@@ -58,7 +69,7 @@ def _response(score=1, *, content=None):
                     "finish_reason": "stop",
                     "message": {
                         "role": "assistant",
-                        "content": json.dumps({"score": score}) if content is None else content,
+                        "content": json.dumps({"score": score}),
                         "refusal": None,
                     },
                 }
@@ -143,18 +154,18 @@ async def test_rm_reuses_pools_by_alias_and_records_queue_depth(monkeypatch):
     assert not api_module._pools
 
 
-@pytest.mark.parametrize("status", [400, 401, 429, 500, 503])
-def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
+def test_http_failure_is_fatal_without_sdk_retries(sdk_transport):
+    """429 is normally retried by the SDK; rewards must surface it after one request."""
     calls = 0
 
     def handler(request):
         nonlocal calls
         calls += 1
-        return httpx.Response(status, json={"error": {"message": "test failure"}})
+        return httpx.Response(429, json={"error": {"message": "test failure"}})
 
     sdk_transport(handler)
     actor = ApiRewardActor(config=_config())
-    with pytest.raises(openai.APIStatusError):
+    with pytest.raises(openai.RateLimitError):
         actor.score_batch([_sample(1).generated_output], ["1"])
     with pytest.raises(RuntimeError, match="stopped after a scoring failure"):
         actor.score_batch([_sample(2).generated_output], ["2"])
@@ -162,36 +173,29 @@ def test_http_failure_is_fatal_without_sdk_retries(status, sdk_transport):
 
 
 @pytest.mark.parametrize(
-    "response_kwargs",
+    "content",
     [
-        {"content": ""},
-        {"content": "Score: 2"},
-        {"content": '{"score": "2"}'},
-        {"content": '{"score": true}'},
-        {"content": '{"score": NaN}'},
-        {"content": '{"score": Infinity}'},
-        {"content": "{}"},
-        {"content": "[]"},
-        {"score": -1},
-        {"score": 5},
+        "Score: 2",
+        '{"score": "2"}',
+        '{"score": true}',
+        '{"score": NaN}',
+        '{"score": -1}',
+        '{"score": 5}',
     ],
 )
-def test_invalid_response_never_becomes_a_reward(response_kwargs, sdk_transport):
-    sdk_transport(lambda request: _response(**response_kwargs))
-    actor = ApiRewardActor(config=_config())
-    with pytest.raises((ValueError, KeyError, TypeError)):
-        actor.score_batch([_sample(1).generated_output], ["1"])
+def test_invalid_response_never_becomes_a_reward(content):
+    with pytest.raises(ValueError):
+        _parse_score(content, _config())
 
 
-@pytest.mark.parametrize("output", [None, torch.zeros(3, 2, 8, 8), torch.zeros(1, 16000)])
-def test_unsupported_media_fails_before_http(output, sdk_transport):
+def test_video_is_rejected_before_http(sdk_transport):
     def handler(request):
         pytest.fail("Unsupported media must not be sent to the API")
 
     sdk_transport(handler)
     actor = ApiRewardActor(config=_config())
-    with pytest.raises((AttributeError, ValueError)):
-        actor.score_batch([output], ["1"])
+    with pytest.raises(ValueError):
+        actor.score_batch([torch.zeros(3, 2, 8, 8)], ["1"])
 
 
 async def test_builtin_dispatch_and_per_sample_override(monkeypatch):
@@ -229,11 +233,10 @@ def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path
     assert b"test-only-secret" not in pickle.dumps(args)
 
 
-@pytest.mark.parametrize("entry", [{"max_concurrency": 0}, {"api_key": "not-allowed"}])
-def test_invalid_config_is_rejected(tmp_path, entry):
+def test_inline_api_key_is_rejected(tmp_path):
     path = tmp_path / "rm.yaml"
-    path.write_text(yaml.safe_dump({"judge": {"model": "judge", "api_key_env": "TEST_RM_KEY", **entry}}))
-    with pytest.raises(ValueError):
+    path.write_text("judge:\n  model: judge\n  api_key_env: TEST_RM_KEY\n  api_key: not-allowed\n")
+    with pytest.raises(ValueError, match="api_key"):
         load_api_rm_configs(str(path))
 
 

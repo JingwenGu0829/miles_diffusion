@@ -8,7 +8,8 @@ Mental model (--custom-rm-args "hps=0.7,pickscore=0.3" --reward-key weighted, on
 
 Covered: each reward scores the whole batch once and every sample gets its components plus the
 weighted sum (1); an unknown reward name in --custom-rm-args is rejected (2); a --reward-key
-that names neither a component nor "weighted" is rejected before any reward runs (3).
+that names neither a component nor "weighted" is rejected before any reward runs (3);
+score counts must match the batch (4); local and API rewards use the same dispatch (5).
 """
 
 from tests.ci.ci_register import register_cpu_ci
@@ -16,11 +17,16 @@ from tests.ci.ci_register import register_cpu_ci
 register_cpu_ci(est_time=5, suite="stage-a-cpu", labels=[])
 
 from argparse import Namespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+import miles.rollout.rm_hub.api as api_module
+import miles.rollout.rm_hub.hps as hps_module
 import miles.rollout.rm_hub.weighted_mixture_rm as weighted_mixture_rm_module
+from miles.rollout.rm_hub.api import ApiRewardConfig
 from miles.rollout.rm_hub.weighted_mixture_rm import parse_weights, weighted_mixture_rm
+from miles.utils.types import Sample
 
 
 def _fake_rewards(calls):
@@ -78,3 +84,28 @@ async def test_wrong_score_count_is_rejected_instead_of_dropping_samples(monkeyp
     args = Namespace(api_rm_config=None, custom_rm_args="hps=1", reward_key="weighted")
     with pytest.raises(ValueError, match="returned 3 scores for 2 samples"):
         await weighted_mixture_rm_module.weighted_mixture_rm(args, [object(), object()])
+
+
+@pytest.mark.asyncio
+async def test_local_and_api_rewards_share_dispatch_without_alias_crosstalk(monkeypatch):
+    """Keep real name resolution; only the expensive scorers/pools are replaced."""
+    hps_rm = AsyncMock(return_value=[0.1, 0.2])
+    monkeypatch.setattr(hps_module, "hps_rm", hps_rm)
+    pools = {name: AsyncMock() for name in ("judge", "reverse")}
+    pools["judge"].score.return_value = ([1.0, 2.0], 0)
+    pools["reverse"].score.return_value = ([3.0, 2.0], 0)
+    monkeypatch.setattr(api_module, "_pools", pools)
+    args = Namespace(
+        _api_rm_configs={name: ApiRewardConfig(model=name, api_key_env="TEST_RM_KEY") for name in pools},
+        custom_rm_args="hps=0.2,judge=0.5,reverse=0.3",
+        reward_key="weighted",
+    )
+    samples = [Sample(prompt="first"), Sample(prompt="second")]
+
+    rewards = await weighted_mixture_rm(args, samples)
+
+    assert [r["weighted"] for r in rewards] == pytest.approx([1.42, 1.64])
+    assert [(r["judge"], r["reverse"]) for r in rewards] == [(1.0, 3.0), (2.0, 2.0)]
+    hps_rm.assert_awaited_once_with(args, samples)
+    for pool in pools.values():
+        pool.score.assert_awaited_once_with([None, None], ["first", "second"])
