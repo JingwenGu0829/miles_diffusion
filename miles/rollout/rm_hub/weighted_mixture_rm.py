@@ -3,17 +3,12 @@
     --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \\
     --custom-rm-args "hps=0.7,pickscore=0.3" --reward-key weighted
 
-To include an API reward, configure it in ``rewards.yaml``
-(see ``docs/user-guide/rewards.md``), then use:
-
-    --api-rm-config rewards.yaml \\
-    --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \\
-    --custom-rm-args "hps=0.7,api=0.3" --reward-key weighted
+For an API component, add ``--api-rm-config rewards.yaml`` and use weights such as
+``hps=0.7,api=0.3``. See ``docs/user-guide/rewards.md`` for the YAML format.
 
 Each sample's reward is a dict holding every component plus ``"weighted"``, so each reward
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains
-on. ``weighted`` selects the returned dictionary entry; this function computes the sum.
-Each named reward scores the whole batch once. Local rewards keep their own placement flags
+on. Each named reward scores the whole batch once. Local rewards keep their own placement flags
 (``--<rm>-reward-colocate``, ``--<rm>-num-gpus-per-worker``). Weights apply to raw scores,
 whose scales differ: HPSv2.1 ~0.3, PickScore/26 ~0.85, OCR in [0, 1], default API rubric in [0, 4].
 API rewards use their YAML settings and do not consume local GPU reward slots.

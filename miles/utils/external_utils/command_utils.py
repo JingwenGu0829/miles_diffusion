@@ -132,8 +132,7 @@ def execute_train(
     if not get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
         return
 
-    # Ray jobs do not inherit arbitrary environment variables from the submitting
-    # shell. Use a mode-0600 file because exec_command logs its command line.
+    # Keep environment secrets out of the logged command line.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as runtime_env_file:
         json.dump({"env_vars": runtime_env_vars}, runtime_env_file)
         runtime_env_file.flush()

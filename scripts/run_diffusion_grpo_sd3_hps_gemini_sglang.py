@@ -120,7 +120,7 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
         "--deterministic-mode "
     ) + ("--diffusion-debug-mode --debug-skip-optimizer-step " if args.debug_alignment else "")
 
-    # Keep the inline config readable by the driver until job submission completes.
+    # Keep the temporary YAML available until the driver has read it.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as rm_config_file:
         yaml.safe_dump(api_rm_config, rm_config_file)
         rm_config_file.flush()

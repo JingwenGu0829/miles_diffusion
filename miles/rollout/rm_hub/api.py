@@ -97,7 +97,7 @@ class ApiRewardActor:
 
 
 class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
-    """One synchronous HTTP request per zero-GPU actor; shared across microgroups."""
+    """Ray actor pool for API rewards; each zero-GPU actor sends one request at a time."""
 
     def __init__(self, args) -> None:
         config = args._api_rm_config

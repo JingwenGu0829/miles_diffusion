@@ -70,7 +70,7 @@ async def test_missing_reward_key_is_rejected_before_scoring(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_local_and_api_rewards_mix(monkeypatch):
-    """Keep real name resolution; only the expensive scorers/pools are replaced."""
+    """Exercise the mixture's API dispatch without starting reward workers."""
     hps_rm = AsyncMock(return_value=[0.1, 0.2])
     monkeypatch.setitem(weighted_mixture_rm_module._REWARDS, "hps", hps_rm)
     pool = AsyncMock()

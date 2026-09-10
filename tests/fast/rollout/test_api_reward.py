@@ -1,4 +1,4 @@
-"""API-specific contracts, with an in-process SDK transport and mocked reward pools.
+"""API rewards pair each generated image with its prompt and return one numeric score.
 
 Mental model:
 
