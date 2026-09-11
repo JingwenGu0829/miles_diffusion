@@ -258,7 +258,7 @@ add these reward arguments to a colocated image training recipe:
 ```bash
 --api-rm-config rewards.yaml \
 --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \
---custom-rm-args "hps=0.7,api=0.3" \
+--custom-rm-args "api=0.7,hps=0.3" \
 --reward-key weighted \
 --hps-version v2.1 \
 --hps-reward-colocate
@@ -275,7 +275,7 @@ For each sample, this function returns a dictionary such as:
 {
     "hps": 0.3,
     "api": 3.0,
-    "weighted": 1.11,  # 0.7 * 0.3 + 0.3 * 3.0
+    "weighted": 2.19,  # 0.7 * 3.0 + 0.3 * 0.3
 }
 ```
 
@@ -296,8 +296,8 @@ The mixture applies the same raw weighted sum to API scores (default range
 Results are matched to input samples in input order, regardless of request
 completion order. A failure in any required component fails the job.
 
-For a complete Gemini API-only example (`--rm-type api`), use
-`scripts/run_diffusion_grpo_sd3_gemini_sglang.py` with its inline API
+For a complete 0.7 Gemini API + 0.3 HPS example, use
+`scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py` with its inline API
 configuration. See [SD3](../models/sd3/sd3.md) § 5.6 for launch instructions and
 verification status.
 

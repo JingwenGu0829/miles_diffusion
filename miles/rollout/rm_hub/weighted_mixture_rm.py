@@ -4,7 +4,7 @@
     --custom-rm-args "hps=0.7,pickscore=0.3" --reward-key weighted
 
 For an API component, add ``--api-rm-config rewards.yaml`` and use weights such as
-``hps=0.7,api=0.3``. See ``docs/user-guide/rewards.md`` for the YAML format.
+``api=0.7,hps=0.3``. See ``docs/user-guide/rewards.md`` for the YAML format.
 
 Each sample's reward is a dict holding every component plus ``"weighted"``, so each reward
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains

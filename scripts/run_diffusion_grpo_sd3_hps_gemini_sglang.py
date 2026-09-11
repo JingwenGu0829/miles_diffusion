@@ -1,17 +1,17 @@
-"""SD3.5-medium GRPO on Gemini API reward only.
+"""SD3.5-medium GRPO on 0.7 Gemini API + 0.3 HPS reward.
 
-Each generated image receives the API's raw prompt-adherence score as its reward.
+Each generated image receives a weighted sum of raw API and HPS scores.
 No complete training curve has been run for this recipe.
 
-2-GPU colocate: FSDP DP=2 and two rollout engines share the GPUs.
+2-GPU colocate: FSDP DP=2, two rollout engines, and one HPS worker share the GPUs.
 The Gemini API reward does not consume a local GPU slot.
 
 HF_TOKEN and GEMINI_API_KEY must be set. Edit api_rm_config below to change the
 API model, endpoint, timeout, or concurrency.
 
 Usage:
-    python3 scripts/run_diffusion_grpo_sd3_gemini_sglang.py
-    python3 scripts/run_diffusion_grpo_sd3_gemini_sglang.py --num-rollout 50
+    python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py
+    python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py --num-rollout 50
 """
 
 import os
@@ -48,7 +48,7 @@ def prepare(args: ScriptArgs) -> str:
 
 
 def execute(args: ScriptArgs, data_dir: str) -> None:
-    run_name = f"diffusion_grpo_sd3_gemini_sglang_{U.create_run_id()}"
+    run_name = f"diffusion_grpo_sd3_hps_gemini_sglang_{U.create_run_id()}"
 
     ckpt_args = f"--hf-checkpoint {MODEL} --save {args.output_dir}/{run_name}/ckpt "
 
@@ -89,7 +89,11 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
         "max_concurrency": 64,
     }
 
-    reward_args = "--rm-type api "
+    reward_args = (
+        "--custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm "
+        "--custom-rm-args api=0.7,hps=0.3 --reward-key weighted "
+        "--hps-num-workers 1 --hps-batch-size 8 --hps-version v2.1 --hps-reward-colocate "
+    )
 
     wandb_args = U.get_default_wandb_args(
         __file__, run_id=run_name, project=WANDB_PROJECT, wandb_log_num_images=8, wandb_log_image_interval=10
