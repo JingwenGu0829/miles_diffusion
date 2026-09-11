@@ -207,9 +207,12 @@ jobs:
           df -h
 
       # The SFT media reader shells out to ffmpeg; ubuntu-latest stopped shipping it.
+      # Third-party sources on the hosted image serve stale indexes; install is the gate.
       - name: Install ffmpeg
         shell: bash
-        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+        run: |
+          sudo apt-get update -q -o Acquire::Retries=3 || true
+          sudo apt-get install -y -q ffmpeg
 
       - name: Checkout miles-diffusion
         uses: actions/checkout@v4
@@ -228,7 +231,7 @@ jobs:
       - name: Install system dependencies
         shell: bash
         run: |
-          sudo apt-get update
+          sudo apt-get update -q -o Acquire::Retries=3 || true
           sudo apt-get install -y protobuf-compiler
           protoc --version
 

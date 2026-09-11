@@ -194,6 +194,7 @@ See [Dtype Control](../advanced/dtype-control.md).
 | `--update-weight-target-module` | str | `transformer` | Modules to train and sync. Wan2.2: `transformer,transformer_2`. |
 | `--update-weight-buffer-size` | int | 512 MiB | Weight-sync chunk size in bytes. |
 | `--rollout-seed` | int | `42` | |
+| `--rollout-shuffle` | flag | off | Shuffle the prompt order once per epoch (seeded by `--rollout-seed`). Off reads the jsonl in file order. |
 | `--over-sampling-batch-size` | int | – | Must equal `--rollout-batch-size` today. |
 | `--sglang-server-concurrency` | int | `512` | Per-engine in-flight request cap. |
 | `--use-distributed-post` | flag | off | Rollout HTTP POSTs go through per-node Ray actors instead of the local client (`MILES_HTTP_POST_ACTORS_PER_NODE` sets the count). |
@@ -265,12 +266,12 @@ See [Dtype Control](../advanced/dtype-control.md).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
-| `--rm-type` | enum | – | `pickscore` / `hps` / `ocr`. Overridable per sample via `metadata.rm_type`. Ignored when `--custom-rm-path` is set. |
-| `--reward-key` | str | – | When the reward is a dict. |
+| `--rm-type` | str | – | `pickscore` / `hps` / `ocr` / `api`. Overridable per sample via `metadata.rm_type`. Ignored when `--custom-rm-path` is set. |
+| `--api-rm-config` | str | – | YAML configuration for one API reward: `model`, `base_url`, `api_key_env`, and optional rubric, score range, timeout, and concurrency settings. See [API rewards](rewards.md#api-rewards). |
 | `--group-rm` | flag | off | Score a whole prompt group at once. |
-| `--custom-rm-path` | str | – | `async def rm(args, samples) -> list[float]`. Batched only; replaces the `--rm-type` dispatch entirely. Shipped: `miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm` (weighted sum of built-in rewards). |
+| `--custom-rm-path` | str | – | `async def rm(args, samples)` returning one scalar or dictionary per sample. Batched only; replaces the `--rm-type` dispatch entirely. Shipped: `miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm` (weighted sum of local and configured API rewards). |
 | `--custom-rm-args` | str | – | Opaque config string for the custom RM, read as `args.custom_rm_args`; e.g. `"hps=0.7,pickscore=0.3"` for `rm_hub.weighted_mixture_rm`. |
-| `--reward-key` | str | – | For dict-valued rewards: the entry GRPO trains on. Every entry is also logged as `rollout/reward/<key>_mean` and `eval/<dataset>/<key>`. |
+| `--reward-key` | str | – | For dict-valued rewards: the entry GRPO trains on, e.g. `weighted` for the mixture example. Leave unset for scalar rewards. Every entry is also logged as `rollout/reward/<key>_mean` and `eval/<dataset>/<key>`. |
 | `--custom-reward-post-process-path` | str | – | Replace advantage normalisation. |
 | `--pickscore-model-path` | str | – | Required for `--rm-type pickscore`. |
 | `--pickscore-processor-path` | str | – | Required for `--rm-type pickscore`. |
