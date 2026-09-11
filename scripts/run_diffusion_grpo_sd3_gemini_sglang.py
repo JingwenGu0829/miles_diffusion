@@ -1,17 +1,17 @@
-"""SD3.5-medium GRPO on 0.7 HPS + 0.3 Gemini API reward.
+"""SD3.5-medium GRPO on Gemini API reward only.
 
-The HPS recipe with an API reward mixed in through weighted_mixture_rm.
-The mixture weights are illustrative; no complete training curve has been run.
+Each generated image receives the API's raw prompt-adherence score as its reward.
+No complete training curve has been run for this recipe.
 
-2-GPU colocate: FSDP DP=2, two rollout engines, and one HPS worker share the GPUs.
+2-GPU colocate: FSDP DP=2 and two rollout engines share the GPUs.
 The Gemini API reward does not consume a local GPU slot.
 
 HF_TOKEN and GEMINI_API_KEY must be set. Edit api_rm_config below to change the
 API model, endpoint, timeout, or concurrency.
 
 Usage:
-    python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py
-    python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py --num-rollout 50
+    python3 scripts/run_diffusion_grpo_sd3_gemini_sglang.py
+    python3 scripts/run_diffusion_grpo_sd3_gemini_sglang.py --num-rollout 50
 """
 
 import os
@@ -48,7 +48,7 @@ def prepare(args: ScriptArgs) -> str:
 
 
 def execute(args: ScriptArgs, data_dir: str) -> None:
-    run_name = f"diffusion_grpo_sd3_hps_gemini_sglang_{U.create_run_id()}"
+    run_name = f"diffusion_grpo_sd3_gemini_sglang_{U.create_run_id()}"
 
     ckpt_args = f"--hf-checkpoint {MODEL} --save {args.output_dir}/{run_name}/ckpt "
 
@@ -86,14 +86,10 @@ def execute(args: ScriptArgs, data_dir: str) -> None:
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "api_key_env": "GEMINI_API_KEY",
         "timeout_s": 90,
-        "max_concurrency": 2,
+        "max_concurrency": 64,
     }
 
-    reward_args = (
-        "--custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm "
-        "--custom-rm-args hps=0.7,api=0.3 --reward-key weighted "
-        "--hps-num-workers 1 --hps-batch-size 8 --hps-version v2.1 --hps-reward-colocate "
-    )
+    reward_args = "--rm-type api "
 
     wandb_args = U.get_default_wandb_args(
         __file__, run_id=run_name, project=WANDB_PROJECT, wandb_log_num_images=8, wandb_log_image_interval=10

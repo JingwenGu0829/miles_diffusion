@@ -51,7 +51,7 @@ Prompt datasets live under
 | Recipe | Subset | Train path |
 |---|---|---|
 | GRPO + OCR | `flowgrpo_ocr` | `.../flowgrpo_ocr/train.jsonl` |
-| GRPO + HPS / HPS & Gemini API | `hpdv2` | `.../hpdv2/train.jsonl` |
+| GRPO + HPS / Gemini API | `hpdv2` | `.../hpdv2/train.jsonl` |
 | NFT + PickScore | `flowgrpo_pickscore` | `.../flowgrpo_pickscore/train.jsonl` |
 
 Launch scripts download the matching subset automatically via
@@ -104,7 +104,7 @@ All recipes are Python modules under `scripts/`. Each exposes a Typer CLI
 |---|---|---|---|
 | `run_diffusion_grpo_sd3_ocr_sglang.py` | OCR (CPU) | 2 colocate | Flow-GRPO |
 | `run_diffusion_grpo_sd3_hps_sglang.py` | HPS | 2 colocate | Flow-GRPO |
-| `run_diffusion_grpo_sd3_hps_gemini_sglang.py` | 0.7 HPS + 0.3 Gemini API | 2 colocate | Flow-GRPO |
+| `run_diffusion_grpo_sd3_gemini_sglang.py` | Gemini API only | 2 colocate | Flow-GRPO |
 | `run_diffusion_grpo_sd3_ocr_pickscore_sglang.py` | 0.8 OCR + 0.2 PickScore | 2 colocate | Flow-GRPO |
 | `run_diffusion_nft_sd3_pickscore.py` | PickScore | 3 (2+1) | DiffusionNFT |
 
@@ -195,9 +195,9 @@ MILES_SCRIPT_SMOKE=1 python3 scripts/run_diffusion_nft_sd3_pickscore.py
 | Reward placement | CPU OCR | Colocated HPS actor | CPU OCR + colocated PickScore actor | Dedicated PickScore GPU |
 | Verification | FG | V | V | FG |
 
-### 5.6 Flow-GRPO + HPS & Gemini API (2 GPU colocate)
+### 5.6 Flow-GRPO + Gemini API (2 GPU colocate)
 
-Script: `scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py`
+Script: `scripts/run_diffusion_grpo_sd3_gemini_sglang.py`
 
 **Status:** [○ NV — Not verified](../../user-guide/recipe-verification.md#nv).
 No complete training curve has been run for this recipe.
@@ -205,23 +205,22 @@ No complete training curve has been run for this recipe.
 ```bash
 export HF_TOKEN=...
 export GEMINI_API_KEY=...
-python3 scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py \
+python3 scripts/run_diffusion_grpo_sd3_gemini_sglang.py \
   --cuda-visible-devices 0,1 \
   --num-rollout 50
 ```
 
-This recipe adds `0.7 HPS + 0.3 Gemini API` to the HPS recipe's `hpdv2` prompts,
-LoRA, SDE, and training settings. HPS shares a rollout GPU; the API reward uses no
-local GPU slot. The mixture weights illustrate the integration and have not
-been tuned.
+This recipe uses the Gemini API's raw prompt-adherence score as the sole reward
+(weight 1.0), with `hpdv2` prompts, LoRA, and SDE training. The API reward uses no
+local GPU slot.
 
 The API configuration is inline in the script's `api_rm_config` dictionary.
+The recipe sets `max_concurrency` to 64 concurrent API requests.
 Set its `model` field to a Gemini model available to your account; the endpoint,
 key environment variable, timeout, and concurrency are configured alongside it.
 The script writes a temporary YAML for `--api-rm-config` when submitting the job.
 It explicitly passes the configured API key to Ray through `extra_env_vars`.
-The recipe uses `--custom-rm-args hps=0.7,api=0.3 --reward-key weighted` to train
-on the sum and logs the components as `hps` and `api`.
+The recipe selects the built-in API reward with `--rm-type api`.
 See [Rewards](../../user-guide/rewards.md) for the shared OpenAI/Gemini API
 contract and configuration fields.
 

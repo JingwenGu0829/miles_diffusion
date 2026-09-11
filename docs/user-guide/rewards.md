@@ -296,8 +296,8 @@ The mixture applies the same raw weighted sum to API scores (default range
 Results are matched to input samples in input order, regardless of request
 completion order. A failure in any required component fails the job.
 
-For a complete Gemini example, use
-`scripts/run_diffusion_grpo_sd3_hps_gemini_sglang.py` with its inline API
+For a complete Gemini API-only example (`--rm-type api`), use
+`scripts/run_diffusion_grpo_sd3_gemini_sglang.py` with its inline API
 configuration. See [SD3](../models/sd3/sd3.md) § 5.6 for launch instructions and
 verification status.
 
