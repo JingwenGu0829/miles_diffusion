@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import io
 import json
 import math
 import os
@@ -16,7 +14,7 @@ from miles.utils.api_rm_config import OpenAIImageRewardConfig
 from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
 
-from .api import ApiRewardActor, AsyncApiRewardPool
+from .api import ApiRewardActor, AsyncApiRewardPool, _encode_image
 from .core import record_reward_queue_depth
 
 
@@ -33,12 +31,6 @@ _RESPONSE_FORMAT = {
         },
     },
 }
-
-
-def _encode_image(image: Image.Image) -> str:
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 class OpenAIImageScorer:
