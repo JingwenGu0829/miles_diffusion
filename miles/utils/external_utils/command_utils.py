@@ -7,7 +7,6 @@ import json
 import os
 import random
 import shlex
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,7 +64,7 @@ def execute_train(
     teardown and `ray start` are skipped and the job is submitted to the running one.
     Submitting rather than running `python` directly is what makes the driver live in
     the cluster, so it sees every node's GPUs and every worker gets the same runtime env.
-    Only names in ``redact_env_vars`` have their values hidden in the runtime-env log.
+    Only names in ``redact_env_vars`` have their values hidden in the command log.
     """
     if config is None:
         config = ExecuteTrainConfig()
@@ -131,22 +130,20 @@ def execute_train(
         **_parse_extra_env_vars(config.extra_env_vars),
     }
     runtime_env_vars["PYTHONPATH"] = _pythonpath_with_sources(runtime_env_vars.get("PYTHONPATH"))
+    runtime_env_json = json.dumps({"env_vars": runtime_env_vars})
+
     if not get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
         return
 
+    cmd = (
+        "export no_proxy=127.0.0.1 && export PYTHONUNBUFFERED=1 && "
+        f"""ray job submit {'' if 'RAY_ADDRESS' in os.environ else '--address="http://127.0.0.1:8265" '}"""
+        f"--runtime-env-json={shlex.quote(runtime_env_json)} "
+        f"-- python3 {shlex.quote(train_script)} {train_args}"
+    )
     logged_env_vars = {k: "***" if k in redact_env_vars else v for k, v in runtime_env_vars.items()}
-    print("Runtime env:", json.dumps({"env_vars": logged_env_vars}), flush=True)
-
-    # Pass real environment values via a file so they stay out of the command line.
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as runtime_env_file:
-        json.dump({"env_vars": runtime_env_vars}, runtime_env_file)
-        runtime_env_file.flush()
-        exec_command(
-            "export no_proxy=127.0.0.1 && export PYTHONUNBUFFERED=1 && "
-            f"""ray job submit {'' if 'RAY_ADDRESS' in os.environ else '--address="http://127.0.0.1:8265" '}"""
-            f"--runtime-env={shlex.quote(runtime_env_file.name)} "
-            f"-- python3 {shlex.quote(train_script)} {train_args}"
-        )
+    logged_env_json = json.dumps({"env_vars": logged_env_vars})
+    exec_command(cmd, log_cmd=cmd.replace(shlex.quote(runtime_env_json), shlex.quote(logged_env_json), 1))
 
 
 def _pythonpath_with_sources(*additional_pythonpaths: str | None) -> str:
