@@ -33,7 +33,7 @@ from PIL import Image
 
 import miles.rollout.rm_hub.api as api_module
 from miles.rollout.rm_hub import async_rm, batched_async_rm
-from miles.rollout.rm_hub.api import ApiRewardActor, OpenAIImageRewardActor, _parse_score, api_rm
+from miles.rollout.rm_hub.api import ApiRewardActor, OpenAIImageRewardActor, OpenAIImageScorer, api_rm
 from miles.utils.api_rm_config import ApiRewardConfig, OpenAIImageRewardConfig, load_api_rm_config
 from miles.utils.types import Sample
 
@@ -176,8 +176,10 @@ def test_http_error_propagates_after_sdk_retries(sdk_transport, status, error):
     ],
 )
 def test_invalid_response_never_becomes_a_reward(content):
+    scorer = OpenAIImageScorer.__new__(OpenAIImageScorer)
+    scorer.config = _config()
     with pytest.raises(ValueError):
-        _parse_score(content, _config())
+        scorer._parse_score(content)
 
 
 def test_video_is_rejected_before_http(sdk_transport):

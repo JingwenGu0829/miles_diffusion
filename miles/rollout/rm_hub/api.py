@@ -64,15 +64,6 @@ def _encode_image(image: Image.Image) -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _parse_score(content: str, config: OpenAIImageRewardConfig) -> float:
-    score = json.loads(content)["score"]
-    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
-        raise ValueError("Reward score must be a finite number")
-    if not config.score_min <= score <= config.score_max:
-        raise ValueError(f"Reward score must be in [{config.score_min}, {config.score_max}]")
-    return float(score)
-
-
 class OpenAIImageScorer:
     """Score prompt/image pairs using the OpenAI-compatible Chat Completions API."""
 
@@ -104,8 +95,16 @@ class OpenAIImageScorer:
                 ],
                 response_format=_RESPONSE_FORMAT,
             )
-            scores.append(_parse_score(response.choices[0].message.content, self.config))
+            scores.append(self._parse_score(response.choices[0].message.content))
         return scores
+
+    def _parse_score(self, content: str) -> float:
+        score = json.loads(content)["score"]
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
+            raise ValueError("Reward score must be a finite number")
+        if not self.config.score_min <= score <= self.config.score_max:
+            raise ValueError(f"Reward score must be in [{self.config.score_min}, {self.config.score_max}]")
+        return float(score)
 
 
 class OpenAIImageRewardActor(ApiRewardActor):
