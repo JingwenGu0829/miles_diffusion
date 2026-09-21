@@ -77,7 +77,7 @@ async def test_local_and_api_rewards_mix(monkeypatch):
     pool.score.return_value = ([1.0, 2.0], 0)
     monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda args: pool)
     args = Namespace(
-        _api_rm_config=ApiRewardConfig(model="judge", api_key_env="TEST_RM_KEY"),
+        _api_rm_config=ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}),
         custom_rm_args="hps=0.7,api=0.3",
         reward_key="weighted",
     )

@@ -14,14 +14,13 @@ import argparse
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from miles.backends.sglang_diffusion_utils.arguments import add_sglang_diffusion_arguments
 from miles.backends.sglang_diffusion_utils.arguments import validate_args as sglang_validate_args
-from miles.utils.api_rm_config import ApiRewardConfig
+from miles.utils.api_rm_config import load_api_rm_config
 from miles.utils.eval_config import EvalDatasetConfig, build_eval_dataset_configs, ensure_dataset_list
 from miles.utils.logging_utils import configure_logger
 
@@ -1235,8 +1234,8 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 "--api-rm-config",
                 type=str,
                 default=None,
-                help="YAML configuration for one API reward: model, base_url, api_key_env, and optional prompt_path, "
-                "score_min/score_max, timeout_s, max_concurrency. Images only; failures stop the job.",
+                help="YAML configuration for one API reward: actor_class, actor_kwargs, and max_concurrency. "
+                "Defaults to the OpenAI-compatible image actor; flat OpenAI configuration is also accepted.",
             )
             parser.add_argument(
                 "--reward-key",
@@ -1531,20 +1530,6 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
         args.eval_prompt_data = None
 
     return eval_datasets
-
-
-def load_api_rm_config(path: str) -> ApiRewardConfig:
-    config_path = Path(path)
-    config = yaml.safe_load(config_path.read_text())
-    if not isinstance(config, dict):
-        raise ValueError("--api-rm-config must contain a mapping")
-
-    if prompt_path := config.pop("prompt_path", None):
-        config["prompt"] = (config_path.parent / prompt_path).read_text()
-    config = ApiRewardConfig(**config)
-    if not isinstance(config.max_concurrency, int) or config.max_concurrency <= 0:
-        raise ValueError("--api-rm-config: max_concurrency must be a positive integer")
-    return config
 
 
 def set_default_diffusion_args(args) -> None:
