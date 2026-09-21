@@ -23,13 +23,7 @@ from .core import AsyncRewardActorPool, record_reward_queue_depth
 
 
 class ApiRewardActor(ABC):
-    """Base for remote API rewards using the shared Ray pool.
-
-    Implement ``_score_batch`` to encode raw CFHW tensors, call the service, and
-    return one numeric score per input in the same order. Authentication, media
-    encoding, HTTP schemas, and score ranges belong to the implementation.
-    The pool may call the actor concurrently; keep request state local to each call.
-    """
+    """Base for API reward actors using externally managed services."""
 
     def score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
         if len(outputs) != len(prompts):
@@ -45,6 +39,7 @@ class ApiRewardActor(ABC):
 
     @abstractmethod
     def _score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
+        """Return one score per CFHW tensor in input order; calls may run concurrently."""
         raise NotImplementedError
 
 
