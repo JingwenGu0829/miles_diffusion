@@ -57,6 +57,7 @@ def execute_train(
     train_script: str = "train_diffusion.py",
     before_ray_job_submit=None,
     extra_env_vars: dict[str, str] | None = None,
+    redact_env_vars: tuple[str, ...] = (),
 ) -> None:
     """Start a Ray cluster if we own one, then submit the trainer into it.
 
@@ -64,6 +65,7 @@ def execute_train(
     teardown and `ray start` are skipped and the job is submitted to the running one.
     Submitting rather than running `python` directly is what makes the driver live in
     the cluster, so it sees every node's GPUs and every worker gets the same runtime env.
+    Only names in ``redact_env_vars`` have their values hidden in the runtime-env log.
     """
     if config is None:
         config = ExecuteTrainConfig()
@@ -132,7 +134,10 @@ def execute_train(
     if not get_bool_env_var("MILES_SCRIPT_ENABLE_RAY_SUBMIT", "1"):
         return
 
-    # Keep environment secrets out of the logged command line.
+    logged_env_vars = {k: "***" if k in redact_env_vars else v for k, v in runtime_env_vars.items()}
+    print("Runtime env:", json.dumps({"env_vars": logged_env_vars}), flush=True)
+
+    # Pass real environment values via a file so they stay out of the command line.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as runtime_env_file:
         json.dump({"env_vars": runtime_env_vars}, runtime_env_file)
         runtime_env_file.flush()
