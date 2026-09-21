@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-DEFAULT_API_REWARD_ACTOR = "miles.rollout.rm_hub.api.OpenAIImageRewardActor"
+DEFAULT_API_REWARD_ACTOR = "miles.rollout.rm_hub.openai_api.OpenAIImageRewardActor"
 
 
 @dataclass

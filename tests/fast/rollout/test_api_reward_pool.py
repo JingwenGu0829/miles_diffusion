@@ -20,7 +20,8 @@ import torch
 import yaml
 
 import miles.rollout.rm_hub.core as core_module
-from miles.rollout.rm_hub.api import ApiRewardActor, AsyncApiRewardPool, OpenAIImageRewardActor
+from miles.rollout.rm_hub.api import ApiRewardActor, AsyncApiRewardPool
+from miles.rollout.rm_hub.openai_api import AsyncOpenAIPool, OpenAIImageRewardActor
 from miles.utils.api_rm_config import ApiRewardConfig, load_api_rm_config
 
 
@@ -53,12 +54,13 @@ def api_transport(monkeypatch):
         client.close()
 
 
-def test_pool_reuses_one_concurrent_zero_gpu_worker(ray_worker):
+@pytest.mark.parametrize("pool_cls", [AsyncApiRewardPool, AsyncOpenAIPool])
+def test_pool_reuses_one_concurrent_zero_gpu_worker(ray_worker, pool_cls):
     remote, actor_cls = ray_worker
     config = ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}, max_concurrency=2)
     args = Namespace(_api_rm_config=config)
-    pool = AsyncApiRewardPool(args)
-    assert AsyncApiRewardPool(args) is pool
+    pool = pool_cls(args)
+    assert pool_cls(args) is pool
 
     remote.assert_called_once_with(OpenAIImageRewardActor)
     actor_cls.options.assert_called_once_with(num_cpus=0, num_gpus=0, scheduling_strategy="DEFAULT", max_concurrency=2)
@@ -129,3 +131,22 @@ def test_invalid_actor_class_is_rejected_before_creating_ray_worker(ray_worker, 
     with pytest.raises(TypeError, match="ApiRewardActor subclass"):
         AsyncApiRewardPool(Namespace(_api_rm_config=config))
     remote.assert_not_called()
+
+
+def test_openai_pool_rejects_other_api_implementations(ray_worker):
+    remote, _ = ray_worker
+    config = ApiRewardConfig(actor_class=f"{__name__}.CustomApiRewardActor")
+    with pytest.raises(TypeError, match="OpenAIImageRewardActor subclass"):
+        AsyncOpenAIPool(Namespace(_api_rm_config=config))
+    remote.assert_not_called()
+
+
+def test_generic_and_openai_pools_have_separate_workers(ray_worker):
+    remote, _ = ray_worker
+    args = Namespace(_api_rm_config=ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}))
+    generic_pool = AsyncApiRewardPool(args)
+    openai_pool = AsyncOpenAIPool(args)
+    assert generic_pool is not openai_pool
+    assert generic_pool.name == "api"
+    assert openai_pool.name == "openai_api"
+    assert remote.call_count == 2

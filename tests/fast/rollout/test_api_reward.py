@@ -32,8 +32,10 @@ import yaml
 from PIL import Image
 
 import miles.rollout.rm_hub.api as api_module
+import miles.rollout.rm_hub.openai_api as openai_api_module
 from miles.rollout.rm_hub import async_rm, batched_async_rm
-from miles.rollout.rm_hub.api import ApiRewardActor, OpenAIImageRewardActor, OpenAIImageScorer, api_rm
+from miles.rollout.rm_hub.api import ApiRewardActor, api_rm
+from miles.rollout.rm_hub.openai_api import OpenAIImageRewardActor, OpenAIImageScorer, openai_api_rm
 from miles.utils.api_rm_config import ApiRewardConfig, OpenAIImageRewardConfig, load_api_rm_config
 from miles.utils.types import Sample
 
@@ -129,22 +131,31 @@ def test_actor_preserves_image_prompt_pairing(sdk_transport):
 
 
 @pytest.mark.asyncio
-async def test_rm_passes_raw_tensor_and_preserves_pool_results_and_errors(monkeypatch):
+@pytest.mark.parametrize(
+    "module, pool_name, rm_function, reward_name",
+    [
+        (api_module, "AsyncApiRewardPool", api_rm, "api"),
+        (openai_api_module, "AsyncOpenAIPool", openai_api_rm, "openai_api"),
+    ],
+)
+async def test_rm_passes_raw_tensor_and_preserves_pool_results_and_errors(
+    monkeypatch, module, pool_name, rm_function, reward_name
+):
     pool = AsyncMock()
     pool.score.return_value = ([1.0], 3)
-    monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda args: pool)
+    monkeypatch.setattr(module, pool_name, lambda args: pool)
     args = _args()
     sample = _sample(1)
-    assert await api_rm(args, [sample]) == [1.0]
+    assert await rm_function(args, [sample]) == [1.0]
     (output,), prompts = pool.score.await_args.args
     assert output is sample.generated_output
     assert prompts == [sample.prompt]
-    assert sample.reward_max_queue_depth == {"api": 3.0}
+    assert sample.reward_max_queue_depth == {reward_name: 3.0}
 
     failure = ValueError("Invalid API score")
     pool.score.side_effect = failure
     with pytest.raises(ValueError) as exc:
-        await api_rm(args, [sample])
+        await rm_function(args, [sample])
     assert exc.value is failure
 
 
@@ -193,15 +204,20 @@ def test_video_is_rejected_before_http(sdk_transport):
 
 
 @pytest.mark.asyncio
-async def test_builtin_dispatch_and_per_sample_override(monkeypatch):
+@pytest.mark.parametrize(
+    "module, pool_name, rm_type",
+    [(api_module, "AsyncApiRewardPool", "api"), (openai_api_module, "AsyncOpenAIPool", "openai_api")],
+)
+async def test_builtin_dispatch_and_per_sample_override(monkeypatch, module, pool_name, rm_type):
     pool = AsyncMock()
     pool.score.side_effect = [([1.0, 2.0], 0), ([3.0], 0)]
-    monkeypatch.setattr(api_module, "AsyncApiRewardPool", lambda args: pool)
+    monkeypatch.setattr(module, pool_name, lambda args: pool)
     args = _args()
+    args.rm_type = rm_type
     assert await batched_async_rm(args, [_sample(1), _sample(2)]) == [1.0, 2.0]
     args.rm_type = "unused"
     sample = _sample(3)
-    sample.metadata = {"rm_type": "api"}
+    sample.metadata = {"rm_type": rm_type}
     assert await async_rm(args, sample) == 3.0
 
 

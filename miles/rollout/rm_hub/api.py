@@ -2,21 +2,14 @@
 
 from __future__ import annotations
 
-import base64
-import io
-import json
 import math
-import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from numbers import Real
 
 import torch
-from PIL import Image
 
-from miles.utils.api_rm_config import OpenAIImageRewardConfig
 from miles.utils.misc import SingletonMeta, load_function
-from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
 
 from .core import AsyncRewardActorPool, record_reward_queue_depth
@@ -43,92 +36,19 @@ class ApiRewardActor(ABC):
         raise NotImplementedError
 
 
-_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "image_reward",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {"score": {"type": "number"}},
-            "required": ["score"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-
-def _encode_image(image: Image.Image) -> str:
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-
-
-class OpenAIImageScorer:
-    """Score prompt/image pairs using the OpenAI-compatible Chat Completions API."""
-
-    def __init__(self, config: OpenAIImageRewardConfig):
-        from openai import OpenAI
-
-        self.config = config
-        self.client = OpenAI(
-            api_key=os.environ[config.api_key_env],
-            base_url=config.base_url,
-            timeout=config.timeout_s,
-            max_retries=2,
-        )
-
-    def __call__(self, prompts: Sequence[str], images: Sequence[Image.Image]) -> list[float]:
-        scores = []
-        for prompt, image in zip(prompts, images, strict=True):
-            response = self.client.chat.completions.create(
-                model=self.config.model,
-                messages=[
-                    {"role": "system", "content": self.config.prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": _encode_image(image)}},
-                        ],
-                    },
-                ],
-                response_format=_RESPONSE_FORMAT,
-            )
-            scores.append(self._parse_score(response.choices[0].message.content))
-        return scores
-
-    def _parse_score(self, content: str) -> float:
-        score = json.loads(content)["score"]
-        if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
-            raise ValueError("Reward score must be a finite number")
-        if not self.config.score_min <= score <= self.config.score_max:
-            raise ValueError(f"Reward score must be in [{self.config.score_min}, {self.config.score_max}]")
-        return float(score)
-
-
-class OpenAIImageRewardActor(ApiRewardActor):
-    def __init__(self, **kwargs) -> None:
-        self.scorer = OpenAIImageScorer(OpenAIImageRewardConfig(**kwargs))
-
-    def _score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
-        images = []
-        for output in outputs:
-            (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
-            images.append(Image.fromarray(frame))
-        return self.scorer(prompts, images)
-
-
 class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
     """API reward pool with one zero-GPU actor handling concurrent HTTP requests."""
+
+    name = "api"
+    actor_base_cls = ApiRewardActor
 
     def __init__(self, args) -> None:
         config = args._api_rm_config
         if config is None:
             raise ValueError("API reward requires --api-rm-config.")
         actor_cls = load_function(config.actor_class)
-        if not isinstance(actor_cls, type) or not issubclass(actor_cls, ApiRewardActor):
-            raise TypeError("API reward actor_class must be an ApiRewardActor subclass")
+        if not isinstance(actor_cls, type) or not issubclass(actor_cls, self.actor_base_cls):
+            raise TypeError(f"API reward actor_class must be an {self.actor_base_cls.__name__} subclass")
         super().__init__(
             actor_cls=actor_cls,
             actor_kwargs=config.actor_kwargs,
@@ -136,7 +56,7 @@ class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
             batch_size=1,
             num_gpus_per_worker=0,
             colocate=False,
-            name="api",
+            name=self.name,
             actor_max_concurrency=config.max_concurrency,
         )
 
