@@ -12,6 +12,7 @@ from numbers import Real
 import torch
 from PIL import Image
 
+from miles.utils.api_rm_config import ApiRewardConfig
 from miles.utils.misc import SingletonMeta, load_function
 from miles.utils.types import Sample
 
@@ -45,6 +46,44 @@ class ApiRewardActor(ABC):
         raise NotImplementedError
 
 
+def _api_pool_kwargs(config: ApiRewardConfig, name: str, actor_base_cls=ApiRewardActor) -> dict:
+    actor_cls = load_function(config.actor_class)
+    if not isinstance(actor_cls, type) or not issubclass(actor_cls, actor_base_cls):
+        raise TypeError(f"API reward actor_class must be an {actor_base_cls.__name__} subclass")
+    if type(config.max_concurrency) is not int or config.max_concurrency <= 0:
+        raise ValueError("API reward max_concurrency must be a positive integer")
+    return dict(
+        actor_cls=actor_cls,
+        actor_kwargs=config.actor_kwargs,
+        num_workers=1,
+        batch_size=1,
+        num_gpus_per_worker=0,
+        colocate=False,
+        name=name,
+        actor_max_concurrency=config.max_concurrency,
+    )
+
+
+class ApiReward:
+    """A named API reward with its own lazily created pool."""
+
+    def __init__(self, name: str, config: ApiRewardConfig) -> None:
+        self.name = name
+        self.config = config
+        self._pool = None
+
+    async def __call__(self, args, samples: Sequence[Sample], **kwargs) -> list[float]:
+        if not samples:
+            return []
+        if self._pool is None:
+            self._pool = AsyncRewardActorPool(**_api_pool_kwargs(self.config, self.name))
+        scores, max_queue_depth = await self._pool.score(
+            [s.generated_output for s in samples], [s.prompt for s in samples]
+        )
+        record_reward_queue_depth(samples, self.name, max_queue_depth)
+        return scores
+
+
 class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
     """API reward pool with one zero-GPU actor handling concurrent HTTP requests."""
 
@@ -55,19 +94,7 @@ class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
         config = args._api_rm_config
         if config is None:
             raise ValueError("API reward requires --api-rm-config.")
-        actor_cls = load_function(config.actor_class)
-        if not isinstance(actor_cls, type) or not issubclass(actor_cls, self.actor_base_cls):
-            raise TypeError(f"API reward actor_class must be an {self.actor_base_cls.__name__} subclass")
-        super().__init__(
-            actor_cls=actor_cls,
-            actor_kwargs=config.actor_kwargs,
-            num_workers=1,
-            batch_size=1,
-            num_gpus_per_worker=0,
-            colocate=False,
-            name=self.name,
-            actor_max_concurrency=config.max_concurrency,
-        )
+        super().__init__(**_api_pool_kwargs(config, self.name, self.actor_base_cls))
 
 
 async def api_rm(args, samples: Sequence[Sample], **kwargs) -> list[float]:

@@ -1228,7 +1228,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 "--rm-type",
                 type=str,
                 default=None,
-                help="Built-in reward (pickscore / hps / ocr / openai_api), or api for a configurable actor. "
+                help="Built-in reward (pickscore / hps / ocr / api / openai_api), or a name from --custom-rm-registry-path. "
                 "Ignored when --custom-rm-path is set.",
             )
             parser.add_argument(
@@ -1406,6 +1406,13 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                     "Opaque config string handed to the --custom-rm-path function as `args.custom_rm_args`; "
                     'e.g. "hps=0.7,pickscore=0.3" for miles.rollout.rm_hub.weighted_mixture_rm.'
                 ),
+            )
+            parser.add_argument(
+                "--custom-rm-registry-path",
+                type=str,
+                default=None,
+                help="Import path to a mapping of names to async reward callables accepting (args, samples). "
+                "Extends --rm-type and weighted_mixture_rm; names must not collide with built-ins or 'weighted'.",
             )
             parser.add_argument(
                 "--custom-reward-post-process-path",

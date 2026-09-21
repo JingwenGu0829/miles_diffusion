@@ -5,6 +5,7 @@
 
 For an OpenAI-compatible component, add ``--api-rm-config rewards.yaml`` and use
 weights such as ``openai_api=0.7,hps=0.3``.
+``--custom-rm-registry-path`` adds named reward callables to the same registry.
 
 Each sample's reward is a dict holding every component plus ``"weighted"``, so each reward
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains
@@ -19,35 +20,33 @@ from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
-from .hps import hps_rm
-from .ocr import ocr_rm
-from .openai_api import openai_api_rm
-from .pickscore import pickscore_rm
-
-_REWARDS = {"hps": hps_rm, "pickscore": pickscore_rm, "ocr": ocr_rm, "openai_api": openai_api_rm}
+from .registry import get_reward_registry
 
 
-def parse_weights(custom_rm_args: str) -> list[tuple[str, float]]:
+def parse_weights(custom_rm_args: str, registry: dict | None = None) -> list[tuple[str, float]]:
+    if registry is None:
+        registry = get_reward_registry()
     weights = []
     # launch scripts hand the arg string to `sh`, where ";" would end the command; "," is inert
     for term in custom_rm_args.split(","):
         name, _, weight = term.strip().partition("=")
-        if name not in _REWARDS:
+        if name not in registry:
             raise ValueError(
-                f"--custom-rm-args: unknown reward {name!r} in {custom_rm_args!r}; choose from {tuple(_REWARDS)}"
+                f"--custom-rm-args: unknown reward {name!r} in {custom_rm_args!r}; choose from {tuple(registry)}"
             )
         weights.append((name, float(weight)))
     return weights
 
 
 async def weighted_mixture_rm(args, samples: Sequence[Sample], **kwargs) -> list[dict[str, float]]:
-    weights = parse_weights(args.custom_rm_args)
+    registry = get_reward_registry(args)
+    weights = parse_weights(args.custom_rm_args, registry)
     if args.reward_key not in {name for name, _ in weights} | {"weighted"}:
         raise ValueError(
             f"weighted_mixture_rm returns a dict per sample; pass --reward-key weighted (or one of "
             f"{[name for name, _ in weights]}), got {args.reward_key!r}"
         )
-    per_reward = await asyncio.gather(*(_REWARDS[name](args, samples) for name, _ in weights))
+    per_reward = await asyncio.gather(*(registry[name](args, samples) for name, _ in weights))
     rewards = []
     for i in range(len(samples)):
         components = {name: scores[i] for (name, _), scores in zip(weights, per_reward, strict=True)}
