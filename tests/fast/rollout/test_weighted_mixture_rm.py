@@ -21,9 +21,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import miles.rollout.rm_hub.api as api_module
 import miles.rollout.rm_hub.openai_api as openai_api_module
-import miles.rollout.rm_hub.registry as registry_module
+import miles.rollout.rm_hub.weighted_mixture_rm as weighted_mixture_rm_module
 from miles.rollout.rm_hub.weighted_mixture_rm import parse_weights, weighted_mixture_rm
 from miles.utils.api_rm_config import ApiRewardConfig
 from miles.utils.types import Sample
@@ -44,7 +43,7 @@ def _fake_rewards(calls):
 async def test_each_sample_gets_its_components_and_the_weighted_sum(monkeypatch):
     """Fanning the batch out per sample, dropping a weight, or collapsing to a scalar would all show here."""
     calls = []
-    monkeypatch.setattr(registry_module, "_BUILTIN_REWARDS", _fake_rewards(calls))
+    monkeypatch.setattr(weighted_mixture_rm_module, "_REWARDS", _fake_rewards(calls))
     args = Namespace(custom_rm_args="hps=0.7,pickscore=0.3", reward_key="weighted")
 
     rewards = await weighted_mixture_rm(args, [object(), object()])
@@ -62,7 +61,7 @@ def test_unknown_reward_name_is_rejected():
 @pytest.mark.asyncio
 async def test_missing_reward_key_is_rejected_before_scoring(monkeypatch):
     calls = []
-    monkeypatch.setattr(registry_module, "_BUILTIN_REWARDS", _fake_rewards(calls))
+    monkeypatch.setattr(weighted_mixture_rm_module, "_REWARDS", _fake_rewards(calls))
 
     with pytest.raises(ValueError, match="--reward-key weighted"):
         await weighted_mixture_rm(Namespace(custom_rm_args="hps=0.7,pickscore=0.3", reward_key=None), [object()])
@@ -70,20 +69,16 @@ async def test_missing_reward_key_is_rejected_before_scoring(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "name, module, pool_name",
-    [("api", api_module, "AsyncApiRewardPool"), ("openai_api", openai_api_module, "AsyncOpenAIPool")],
-)
-async def test_local_and_api_rewards_mix(monkeypatch, name, module, pool_name):
+async def test_local_and_openai_api_rewards_mix(monkeypatch):
     """Exercise the mixture's API dispatch without starting reward workers."""
     hps_rm = AsyncMock(return_value=[0.1, 0.2])
-    monkeypatch.setitem(registry_module._BUILTIN_REWARDS, "hps", hps_rm)
+    monkeypatch.setitem(weighted_mixture_rm_module._REWARDS, "hps", hps_rm)
     pool = AsyncMock()
     pool.score.return_value = ([1.0, 2.0], 0)
-    monkeypatch.setattr(module, pool_name, lambda args: pool)
+    monkeypatch.setattr(openai_api_module, "AsyncOpenAIPool", lambda args: pool)
     args = Namespace(
         _api_rm_config=ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}),
-        custom_rm_args=f"hps=0.7,{name}=0.3",
+        custom_rm_args="hps=0.7,openai_api=0.3",
         reward_key="weighted",
     )
     samples = [Sample(prompt="first"), Sample(prompt="second")]
@@ -91,7 +86,7 @@ async def test_local_and_api_rewards_mix(monkeypatch, name, module, pool_name):
     rewards = await weighted_mixture_rm(args, samples)
 
     assert [r["weighted"] for r in rewards] == pytest.approx([0.37, 0.74])
-    assert [(r["hps"], r[name]) for r in rewards] == [(0.1, 1.0), (0.2, 2.0)]
-    assert all(sample.reward_max_queue_depth == {name: 0.0} for sample in samples)
+    assert [(r["hps"], r["openai_api"]) for r in rewards] == [(0.1, 1.0), (0.2, 2.0)]
+    assert all(sample.reward_max_queue_depth == {"openai_api": 0.0} for sample in samples)
     hps_rm.assert_awaited_once_with(args, samples)
     pool.score.assert_awaited_once_with([None, None], ["first", "second"])

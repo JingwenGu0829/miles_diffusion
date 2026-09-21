@@ -3,8 +3,6 @@ import asyncio
 from miles.utils.misc import load_function
 from miles.utils.types import Sample
 
-from .registry import get_reward_registry
-
 
 def _resolve_rm_type(args, sample: Sample) -> str:
     metadata = sample.metadata if isinstance(sample.metadata, dict) else {}
@@ -14,10 +12,28 @@ def _resolve_rm_type(args, sample: Sample) -> str:
 async def async_rm(args, sample: Sample, **kwargs):
     rm_type = _resolve_rm_type(args, sample)
 
-    reward = get_reward_registry(args).get(rm_type)
-    if reward is None:
+    if rm_type == "ocr":
+        from .ocr import ocr_rm
+
+        return (await ocr_rm(args, [sample]))[0]
+    elif rm_type == "pickscore":
+        from .pickscore import pickscore_rm
+
+        return (await pickscore_rm(args, [sample]))[0]
+    elif rm_type == "hps":
+        from .hps import hps_rm
+
+        return (await hps_rm(args, [sample]))[0]
+    elif rm_type == "api":
+        from .api import api_rm
+
+        return (await api_rm(args, [sample]))[0]
+    elif rm_type == "openai_api":
+        from .openai_api import openai_api_rm
+
+        return (await openai_api_rm(args, [sample]))[0]
+    else:
         raise NotImplementedError(f"Rule-based RM for {rm_type!r} is not implemented.")
-    return (await reward(args, [sample]))[0]
 
 
 def create_colocated_reward_pools(args, placement_group, slots) -> list:
@@ -45,10 +61,26 @@ async def batched_async_rm(
 
     if samples:
         rm_types = [_resolve_rm_type(args, sample) for sample in samples]
-        if all(rm_type == rm_types[0] for rm_type in rm_types):
-            reward = get_reward_registry(args).get(rm_types[0])
-            if reward is not None:
-                return await reward(args, samples)
+        if all(rm_type == "pickscore" for rm_type in rm_types):
+            from .pickscore import pickscore_rm
+
+            return await pickscore_rm(args, samples)
+        if all(rm_type == "hps" for rm_type in rm_types):
+            from .hps import hps_rm
+
+            return await hps_rm(args, samples)
+        if all(rm_type == "ocr" for rm_type in rm_types):
+            from .ocr import ocr_rm
+
+            return await ocr_rm(args, samples)
+        if all(rm_type == "api" for rm_type in rm_types):
+            from .api import api_rm
+
+            return await api_rm(args, samples)
+        if all(rm_type == "openai_api" for rm_type in rm_types):
+            from .openai_api import openai_api_rm
+
+            return await openai_api_rm(args, samples)
 
     tasks = [async_rm(args, sample, **kwargs) for sample in samples]
     rewards = await asyncio.gather(*tasks)
