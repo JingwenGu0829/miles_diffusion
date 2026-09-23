@@ -6,6 +6,7 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from numbers import Real
+from typing import Any
 
 import torch
 
@@ -16,23 +17,38 @@ from .core import AsyncRewardActorPool, record_reward_queue_depth
 
 
 class ApiRewardActor(ABC):
-    """Base for API reward actors using externally managed services."""
+    """Build, send, and parse one request per output using backend-specific hooks.
+
+    Hooks may run concurrently on the same actor and must keep per-request state
+    local. The transport owns retries and timeouts; exceptions propagate to the caller.
+    """
 
     def score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
         if len(outputs) != len(prompts):
             raise ValueError("API reward requires one prompt per output")
-        if not outputs:
-            return []
-        scores = self._score_batch(outputs, prompts)
-        if len(scores) != len(outputs):
-            raise ValueError("API reward actor must return one score per output")
-        if any(isinstance(score, bool) or not isinstance(score, Real) or not math.isfinite(score) for score in scores):
-            raise ValueError("API reward scores must be finite numbers")
-        return [float(score) for score in scores]
+        scores = []
+        for output, prompt in zip(outputs, prompts, strict=True):
+            request = self.build_request(output, prompt)
+            response = self.send_request(request)
+            score = self.parse_response(response)
+            if isinstance(score, bool) or not isinstance(score, Real) or not math.isfinite(score):
+                raise ValueError("API reward scores must be finite numbers")
+            scores.append(float(score))
+        return scores
 
     @abstractmethod
-    def _score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
-        """Return one score per CFHW tensor in input order; calls may run concurrently."""
+    def build_request(self, output: torch.Tensor, prompt: str) -> Any:
+        """Build a backend request from one raw CFHW tensor and its prompt."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def send_request(self, request: Any) -> Any:
+        """Send the request through the backend's client and return its response."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def parse_response(self, response: Any) -> float:
+        """Extract one numeric reward and apply backend-specific validation."""
         raise NotImplementedError
 
 

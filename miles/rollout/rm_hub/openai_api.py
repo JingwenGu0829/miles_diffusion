@@ -6,6 +6,7 @@ import json
 import math
 import os
 from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 import torch
 from PIL import Image
@@ -16,6 +17,9 @@ from miles.utils.types import Sample
 
 from .api import ApiRewardActor, AsyncApiRewardPool
 from .core import record_reward_queue_depth
+
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletion
 
 
 _RESPONSE_FORMAT = {
@@ -33,59 +37,48 @@ _RESPONSE_FORMAT = {
 }
 
 
-class OpenAIImageScorer:
+class OpenAIImageRewardActor(ApiRewardActor):
     """Score prompt/image pairs using the OpenAI-compatible Chat Completions API."""
 
-    def __init__(self, config: OpenAIImageRewardConfig):
+    def __init__(self, **kwargs) -> None:
         from openai import OpenAI
 
-        self.config = config
+        self.config = OpenAIImageRewardConfig(**kwargs)
         self.client = OpenAI(
-            api_key=os.environ[config.api_key_env],
-            base_url=config.base_url,
-            timeout=config.timeout_s,
+            api_key=os.environ[self.config.api_key_env],
+            base_url=self.config.base_url,
+            timeout=self.config.timeout_s,
             max_retries=2,
         )
 
-    def __call__(self, prompts: Sequence[str], images: Sequence[Image.Image]) -> list[float]:
-        scores = []
-        for prompt, image in zip(prompts, images, strict=True):
-            response = self.client.chat.completions.create(
-                model=self.config.model,
-                messages=[
-                    {"role": "system", "content": self.config.prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": encode_image_as_png_data_url(image)}},
-                        ],
-                    },
-                ],
-                response_format=_RESPONSE_FORMAT,
-            )
-            scores.append(self._parse_score(response.choices[0].message.content))
-        return scores
+    def build_request(self, output: torch.Tensor, prompt: str) -> dict[str, Any]:
+        (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
+        image = Image.fromarray(frame)
+        return {
+            "model": self.config.model,
+            "messages": [
+                {"role": "system", "content": self.config.prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": encode_image_as_png_data_url(image)}},
+                    ],
+                },
+            ],
+            "response_format": _RESPONSE_FORMAT,
+        }
 
-    def _parse_score(self, content: str) -> float:
-        score = json.loads(content)["score"]
+    def send_request(self, request: dict[str, Any]) -> ChatCompletion:
+        return self.client.chat.completions.create(**request)
+
+    def parse_response(self, response: ChatCompletion) -> float:
+        score = json.loads(response.choices[0].message.content)["score"]
         if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
             raise ValueError("Reward score must be a finite number")
         if not self.config.score_min <= score <= self.config.score_max:
             raise ValueError(f"Reward score must be in [{self.config.score_min}, {self.config.score_max}]")
         return float(score)
-
-
-class OpenAIImageRewardActor(ApiRewardActor):
-    def __init__(self, **kwargs) -> None:
-        self.scorer = OpenAIImageScorer(OpenAIImageRewardConfig(**kwargs))
-
-    def _score_batch(self, outputs: list[torch.Tensor], prompts: list[str]) -> list[float]:
-        images = []
-        for output in outputs:
-            (frame,) = generated_output_to_rgb_hwc_uint8_frames(output, None, round_normalized=True)
-            images.append(Image.fromarray(frame))
-        return self.scorer(prompts, images)
 
 
 class AsyncOpenAIPool(AsyncApiRewardPool):

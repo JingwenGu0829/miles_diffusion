@@ -75,13 +75,16 @@ class CustomApiRewardActor(ApiRewardActor):
     def __init__(self, *, endpoint, timeout_s):
         self.client = httpx.Client(base_url=endpoint, timeout=timeout_s)
 
-    def _score_batch(self, outputs, prompts):
-        scores = []
-        for output, prompt in zip(outputs, prompts, strict=True):
-            response = self.client.post("/score", json={"prompt": prompt, "num_frames": output.shape[1]})
-            response.raise_for_status()
-            scores.append(response.json()["reward"])
-        return scores
+    def build_request(self, output, prompt):
+        return {"prompt": prompt, "num_frames": output.shape[1]}
+
+    def send_request(self, request):
+        response = self.client.post("/score", json=request)
+        response.raise_for_status()
+        return response
+
+    def parse_response(self, response):
+        return response.json()["reward"]
 
 
 @pytest.mark.parametrize("inline", [False, True], ids=["file", "base64"])

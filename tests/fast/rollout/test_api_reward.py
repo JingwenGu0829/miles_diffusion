@@ -35,7 +35,7 @@ import miles.rollout.rm_hub.api as api_module
 import miles.rollout.rm_hub.openai_api as openai_api_module
 from miles.rollout.rm_hub import async_rm, batched_async_rm
 from miles.rollout.rm_hub.api import ApiRewardActor, custom_api_rm
-from miles.rollout.rm_hub.openai_api import OpenAIImageRewardActor, OpenAIImageScorer, openai_api_rm
+from miles.rollout.rm_hub.openai_api import OpenAIImageRewardActor, openai_api_rm
 from miles.utils.api_rm_config import (
     ApiRewardConfig,
     OpenAIImageRewardConfig,
@@ -194,11 +194,20 @@ def test_http_error_propagates_after_sdk_retries(sdk_transport, status, error):
         '{"score": 5}',
     ],
 )
-def test_invalid_response_never_becomes_a_reward(content):
-    scorer = OpenAIImageScorer.__new__(OpenAIImageScorer)
-    scorer.config = _config()
+def test_invalid_response_never_becomes_a_reward(content, sdk_transport):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        data = _response(0).json()
+        data["choices"][0]["message"]["content"] = content
+        return httpx.Response(200, json=data)
+
+    sdk_transport(handler)
+    actor = OpenAIImageRewardActor(**asdict(_config()))
     with pytest.raises(ValueError):
-        scorer._parse_score(content)
+        actor.score_batch([_sample(1).generated_output], ["1"])
+    assert len(requests) == 1
 
 
 def test_video_is_rejected_before_http(sdk_transport):
@@ -275,12 +284,18 @@ def test_invalid_api_concurrency_is_rejected_at_startup(tmp_path, concurrency):
 
 class StubApiRewardActor(ApiRewardActor):
     def __init__(self, scores):
-        self.scores = scores
+        self.scores = iter(scores)
         self.calls = []
 
-    def _score_batch(self, outputs, prompts):
-        self.calls.append((outputs, prompts))
-        return self.scores
+    def build_request(self, output, prompt):
+        self.calls.append((output, prompt))
+        return prompt
+
+    def send_request(self, request):
+        return next(self.scores)
+
+    def parse_response(self, response):
+        return response
 
 
 def test_base_actor_preserves_raw_inputs_and_backend_score_range():
@@ -288,8 +303,10 @@ def test_base_actor_preserves_raw_inputs_and_backend_score_range():
     prompts = ["video", "image"]
     actor = StubApiRewardActor([-7, 12.5])
     assert actor.score_batch(outputs, prompts) == [-7.0, 12.5]
-    assert actor.calls[0][0] is outputs
-    assert actor.calls[0][1] is prompts
+    assert len(actor.calls) == len(outputs)
+    for (output, prompt), expected_output, expected_prompt in zip(actor.calls, outputs, prompts, strict=True):
+        assert output is expected_output
+        assert prompt == expected_prompt
 
 
 def test_invalid_input_pairing_and_empty_batches_do_not_call_backend():
@@ -300,13 +317,7 @@ def test_invalid_input_pairing_and_empty_batches_do_not_call_backend():
     assert actor.calls == []
 
 
-@pytest.mark.parametrize("scores", [[], [1, 2]])
-def test_base_actor_rejects_missing_or_extra_scores(scores):
-    with pytest.raises(ValueError, match="one score per output"):
-        StubApiRewardActor(scores).score_batch([_sample(1).generated_output], ["prompt"])
-
-
-@pytest.mark.parametrize("score", [True, "2", None, float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize("score", [[], [1, 2], True, "2", None, float("nan"), float("inf"), -float("inf")])
 def test_base_actor_rejects_invalid_backend_scores(score):
     with pytest.raises(ValueError, match="finite numbers"):
         StubApiRewardActor([score]).score_batch([_sample(1).generated_output], ["prompt"])
