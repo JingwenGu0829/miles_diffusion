@@ -20,7 +20,7 @@ import yaml
 
 from miles.backends.sglang_diffusion_utils.arguments import add_sglang_diffusion_arguments
 from miles.backends.sglang_diffusion_utils.arguments import validate_args as sglang_validate_args
-from miles.utils.api_rm_config import load_api_rm_config
+from miles.utils.api_rm_config import resolve_api_rm_configs
 from miles.utils.eval_config import EvalDatasetConfig, build_eval_dataset_configs, ensure_dataset_list
 from miles.utils.logging_utils import configure_logger
 
@@ -1240,13 +1240,16 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 help="Built-in reward (pickscore / hps / ocr / openai_api), or custom_api for a configurable actor. "
                 "Ignored when --custom-rm-path is set.",
             )
-            parser.add_argument(
-                "--api-rm-config",
-                type=str,
-                default=None,
-                help="YAML configuration for one API reward: actor_class, actor_kwargs, and max_concurrency. "
-                "Defaults to the OpenAI-compatible image actor; flat OpenAI configuration is also accepted.",
-            )
+            for rm_type in ("custom_api", "openai_api"):
+                parser.add_argument(
+                    f"--{rm_type.replace('_', '-')}-rm-config",
+                    type=str,
+                    default=None,
+                    help=f"YAML file or inline base64:<payload> configuration for {rm_type}: "
+                    "actor_class, actor_kwargs, and max_concurrency. Defaults to the OpenAI-compatible image actor; "
+                    "flat OpenAI configuration is also accepted. Inline configs must embed prompt text; "
+                    "file configs may use prompt_path relative to the config file.",
+                )
             parser.add_argument(
                 "--reward-key",
                 type=str,
@@ -1839,11 +1842,7 @@ def miles_validate_args(args):
     if args.custom_rm_args is not None and args.custom_rm_path is None:
         raise ValueError("--custom-rm-args requires --custom-rm-path.")
 
-    if args.api_rm_config:
-        # Resolve prompt files before args cross the Ray process or node boundary.
-        args._api_rm_config = load_api_rm_config(args.api_rm_config)
-    else:
-        args._api_rm_config = None
+    resolve_api_rm_configs(args)
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path

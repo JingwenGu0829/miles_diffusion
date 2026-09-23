@@ -52,9 +52,9 @@ class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
     actor_base_cls = ApiRewardActor
 
     def __init__(self, args) -> None:
-        config = args._api_rm_config
+        config = getattr(args, f"_{self.name}_rm_config")
         if config is None:
-            raise ValueError("API reward requires --api-rm-config.")
+            raise ValueError(f"{self.name} reward requires --{self.name.replace('_', '-')}-rm-config.")
         actor_cls = load_function(config.actor_class)
         if not isinstance(actor_cls, type) or not issubclass(actor_cls, self.actor_base_cls):
             raise TypeError(f"API reward actor_class must be an {self.actor_base_cls.__name__} subclass")

@@ -9,9 +9,10 @@ from tests.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=5, suite="stage-a-cpu", labels=[])
 
+import base64
 import json
 from argparse import Namespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import httpx
 import openai
@@ -58,7 +59,7 @@ def api_transport(monkeypatch):
 def test_pool_reuses_one_concurrent_zero_gpu_worker(ray_worker, pool_cls):
     remote, actor_cls = ray_worker
     config = ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}, max_concurrency=2)
-    args = Namespace(_api_rm_config=config)
+    args = Namespace(**{f"_{pool_cls.name}_rm_config": config})
     pool = pool_cls(args)
     assert pool_cls(args) is pool
 
@@ -83,8 +84,9 @@ class CustomApiRewardActor(ApiRewardActor):
         return scores
 
 
-def test_custom_api_loads_from_yaml_and_owns_request_and_response_formats(
-    tmp_path, monkeypatch, ray_worker, api_transport
+@pytest.mark.parametrize("inline", [False, True], ids=["file", "base64"])
+def test_custom_api_loads_config_and_owns_request_and_response_formats(
+    tmp_path, monkeypatch, ray_worker, api_transport, inline
 ):
     remote, actor_cls = ray_worker
     path = tmp_path / "rm.yaml"
@@ -94,7 +96,8 @@ def test_custom_api_loads_from_yaml_and_owns_request_and_response_formats(
             {"actor_class": f"{__name__}.CustomApiRewardActor", "actor_kwargs": kwargs, "max_concurrency": 3}
         )
     )
-    config = load_api_rm_config(str(path))
+    value = "base64:" + base64.b64encode(path.read_bytes()).decode() if inline else str(path)
+    config = load_api_rm_config(value)
 
     def create_worker(cls):
         actor_cls.remote.side_effect = cls
@@ -114,7 +117,7 @@ def test_custom_api_loads_from_yaml_and_owns_request_and_response_formats(
         return httpx.Response(200, json={"reward": float(payload["prompt"])})
 
     api_transport(handler)
-    pool = AsyncApiRewardPool(Namespace(_api_rm_config=config))
+    pool = AsyncApiRewardPool(Namespace(_custom_api_rm_config=config))
     remote.assert_called_once_with(CustomApiRewardActor)
     actor_cls.remote.assert_called_once_with(**kwargs)
     actor_cls.options.assert_called_once_with(num_cpus=0, num_gpus=0, scheduling_strategy="DEFAULT", max_concurrency=3)
@@ -129,7 +132,7 @@ def test_invalid_actor_class_is_rejected_before_creating_ray_worker(ray_worker, 
     remote, _ = ray_worker
     config = ApiRewardConfig(actor_class=actor_class)
     with pytest.raises(TypeError, match="ApiRewardActor subclass"):
-        AsyncApiRewardPool(Namespace(_api_rm_config=config))
+        AsyncApiRewardPool(Namespace(_custom_api_rm_config=config))
     remote.assert_not_called()
 
 
@@ -137,16 +140,37 @@ def test_openai_pool_rejects_other_api_implementations(ray_worker):
     remote, _ = ray_worker
     config = ApiRewardConfig(actor_class=f"{__name__}.CustomApiRewardActor")
     with pytest.raises(TypeError, match="OpenAIImageRewardActor subclass"):
-        AsyncOpenAIPool(Namespace(_api_rm_config=config))
+        AsyncOpenAIPool(Namespace(_openai_api_rm_config=config))
     remote.assert_not_called()
 
 
-def test_generic_and_openai_pools_have_separate_workers(ray_worker):
-    remote, _ = ray_worker
-    args = Namespace(_api_rm_config=ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}))
-    generic_pool = AsyncApiRewardPool(args)
+def test_custom_and_openai_pools_use_independent_configs_and_workers(ray_worker):
+    remote, actor_cls = ray_worker
+    custom_config = ApiRewardConfig(
+        actor_class=f"{__name__}.CustomApiRewardActor",
+        actor_kwargs={"endpoint": "http://custom-reward.test", "timeout_s": 17},
+        max_concurrency=3,
+    )
+    openai_config = ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}, max_concurrency=7)
+    args = Namespace(_custom_api_rm_config=custom_config, _openai_api_rm_config=openai_config)
+    custom_pool = AsyncApiRewardPool(args)
     openai_pool = AsyncOpenAIPool(args)
-    assert generic_pool is not openai_pool
-    assert generic_pool.name == "custom_api"
+    assert custom_pool is not openai_pool
+    assert custom_pool.name == "custom_api"
     assert openai_pool.name == "openai_api"
-    assert remote.call_count == 2
+    assert remote.call_args_list == [call(CustomApiRewardActor), call(OpenAIImageRewardActor)]
+    assert actor_cls.remote.call_args_list == [call(**custom_config.actor_kwargs), call(**openai_config.actor_kwargs)]
+    assert [c.kwargs["max_concurrency"] for c in actor_cls.options.call_args_list] == [3, 7]
+
+
+@pytest.mark.parametrize("pool_cls", [AsyncApiRewardPool, AsyncOpenAIPool])
+def test_pool_requires_its_own_config_before_creating_worker(ray_worker, pool_cls):
+    remote, _ = ray_worker
+    configs = {
+        "_custom_api_rm_config": ApiRewardConfig(),
+        "_openai_api_rm_config": ApiRewardConfig(),
+    }
+    configs[f"_{pool_cls.name}_rm_config"] = None
+    with pytest.raises(ValueError, match=f"--{pool_cls.name.replace('_', '-')}-rm-config"):
+        pool_cls(Namespace(**configs))
+    remote.assert_not_called()

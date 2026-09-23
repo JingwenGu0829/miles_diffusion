@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from miles.utils.file_arg_utils import PSEUDO_FILE_PREFIX, resolve_file_arg
+
 DEFAULT_API_REWARD_ACTOR = "miles.rollout.rm_hub.openai_api.OpenAIImageRewardActor"
 
 
@@ -43,26 +45,36 @@ class OpenAIImageRewardConfig:
     timeout_s: float = 60.0
 
 
-def load_api_rm_config(path: str) -> ApiRewardConfig:
-    config_path = Path(path)
-    data = yaml.safe_load(config_path.read_text())
+def load_api_rm_config(value: str, *, flag_name: str = "--custom-api-rm-config") -> ApiRewardConfig:
+    data = yaml.safe_load(resolve_file_arg(value))
     if not isinstance(data, dict):
-        raise ValueError("--api-rm-config must contain a mapping")
+        raise ValueError(f"{flag_name} must contain a mapping")
 
-    # Existing flat YAML files select the default OpenAI-compatible implementation.
+    # Flat configs select the default OpenAI-compatible implementation.
     if "actor_class" not in data and "actor_kwargs" not in data:
         data = {"max_concurrency": data.pop("max_concurrency", 8), "actor_kwargs": data}
     config = ApiRewardConfig(**data)
     if not isinstance(config.actor_class, str) or not config.actor_class.strip():
-        raise ValueError("--api-rm-config: actor_class must be a non-empty class path")
+        raise ValueError(f"{flag_name}: actor_class must be a non-empty class path")
     if not isinstance(config.actor_kwargs, dict):
-        raise ValueError("--api-rm-config: actor_kwargs must contain a mapping")
+        raise ValueError(f"{flag_name}: actor_kwargs must contain a mapping")
     if type(config.max_concurrency) is not int or config.max_concurrency <= 0:
-        raise ValueError("--api-rm-config: max_concurrency must be a positive integer")
+        raise ValueError(f"{flag_name}: max_concurrency must be a positive integer")
 
     if config.actor_class == DEFAULT_API_REWARD_ACTOR:
         kwargs = dict(config.actor_kwargs)
         if prompt_path := kwargs.pop("prompt_path", None):
-            kwargs["prompt"] = (config_path.parent / prompt_path).read_text()
+            if value.startswith(PSEUDO_FILE_PREFIX):
+                raise ValueError(f"{flag_name}: inline configs must embed prompt instead of using prompt_path")
+            kwargs["prompt"] = (Path(value).parent / prompt_path).read_text(encoding="utf-8")
         config.actor_kwargs = asdict(OpenAIImageRewardConfig(**kwargs))
     return config
+
+
+def resolve_api_rm_configs(args) -> None:
+    """Resolve each API config and its prompt before args cross the Ray node boundary."""
+    for rm_type in ("custom_api", "openai_api"):
+        name = f"{rm_type}_rm_config"
+        value = getattr(args, name)
+        config = load_api_rm_config(value, flag_name=f"--{name.replace('_', '-')}") if value else None
+        setattr(args, f"_{name}", config)

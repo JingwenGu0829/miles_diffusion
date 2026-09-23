@@ -36,7 +36,12 @@ import miles.rollout.rm_hub.openai_api as openai_api_module
 from miles.rollout.rm_hub import async_rm, batched_async_rm
 from miles.rollout.rm_hub.api import ApiRewardActor, custom_api_rm
 from miles.rollout.rm_hub.openai_api import OpenAIImageRewardActor, OpenAIImageScorer, openai_api_rm
-from miles.utils.api_rm_config import ApiRewardConfig, OpenAIImageRewardConfig, load_api_rm_config
+from miles.utils.api_rm_config import (
+    ApiRewardConfig,
+    OpenAIImageRewardConfig,
+    load_api_rm_config,
+    resolve_api_rm_configs,
+)
 from miles.utils.types import Sample
 
 
@@ -46,7 +51,10 @@ def _config(**overrides):
 
 def _args():
     return Namespace(
-        rm_type="custom_api", custom_rm_path=None, _api_rm_config=ApiRewardConfig(actor_kwargs=asdict(_config()))
+        rm_type="custom_api",
+        custom_rm_path=None,
+        _custom_api_rm_config=ApiRewardConfig(actor_kwargs=asdict(_config())),
+        _openai_api_rm_config=ApiRewardConfig(actor_kwargs=asdict(_config())),
     )
 
 
@@ -233,12 +241,13 @@ def test_config_prompt_resolution_and_no_credentials_in_serialized_args(tmp_path
     }
     data = kwargs if flat_config else {"actor_kwargs": kwargs}
     config_path.write_text(yaml.safe_dump({**data, "max_concurrency": 3}))
-    args = Namespace(api_rm_config=str(config_path), _api_rm_config=load_api_rm_config(str(config_path)))
+    args = Namespace(custom_api_rm_config=None, openai_api_rm_config=str(config_path))
+    resolve_api_rm_configs(args)
     args = pickle.loads(pickle.dumps(args))
-    assert args._api_rm_config.actor_kwargs["model"] == "judge-version-123"
-    assert args._api_rm_config.max_concurrency == 3
+    assert args._openai_api_rm_config.actor_kwargs["model"] == "judge-version-123"
+    assert args._openai_api_rm_config.max_concurrency == 3
     (tmp_path / "rubric.txt").unlink()
-    assert "0 to 10" in args._api_rm_config.actor_kwargs["prompt"]
+    assert "0 to 10" in args._openai_api_rm_config.actor_kwargs["prompt"]
     assert b"test-only-secret" not in pickle.dumps(args)
 
 

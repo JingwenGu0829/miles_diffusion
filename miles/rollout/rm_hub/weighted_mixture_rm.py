@@ -3,8 +3,10 @@
     --custom-rm-path miles.rollout.rm_hub.weighted_mixture_rm.weighted_mixture_rm \\
     --custom-rm-args "hps=0.7,pickscore=0.3" --reward-key weighted
 
-For an OpenAI-compatible component, add ``--api-rm-config rewards.yaml`` and use
-weights such as ``openai_api=0.7,hps=0.3``. A configurable actor uses ``custom_api=0.7,hps=0.3``.
+For an OpenAI-compatible component, add ``--openai-api-rm-config rewards.yaml`` and use
+weights such as ``openai_api=0.7,hps=0.3``. A configurable actor uses ``--custom-api-rm-config``
+and weights such as ``custom_api=0.7,hps=0.3``. Both flags also accept inline ``base64:<payload>``
+YAML documents and can be used together to configure the two API components independently.
 
 Each sample's reward is a dict holding every component plus ``"weighted"``, so each reward
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains
