@@ -11,10 +11,10 @@ import torch
 from PIL import Image
 
 from miles.utils.api_rm_config import OpenAIImageRewardConfig
-from miles.utils.processing_utils import generated_output_to_rgb_hwc_uint8_frames
+from miles.utils.processing_utils import encode_image_as_png_data_url, generated_output_to_rgb_hwc_uint8_frames
 from miles.utils.types import Sample
 
-from .api import ApiRewardActor, AsyncApiRewardPool, _encode_image
+from .api import ApiRewardActor, AsyncApiRewardPool
 from .core import record_reward_queue_depth
 
 
@@ -58,7 +58,7 @@ class OpenAIImageScorer:
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": _encode_image(image)}},
+                            {"type": "image_url", "image_url": {"url": encode_image_as_png_data_url(image)}},
                         ],
                     },
                 ],

@@ -2,26 +2,17 @@
 
 from __future__ import annotations
 
-import base64
-import io
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from numbers import Real
 
 import torch
-from PIL import Image
 
 from miles.utils.misc import SingletonMeta, load_function
 from miles.utils.types import Sample
 
 from .core import AsyncRewardActorPool, record_reward_queue_depth
-
-
-def _encode_image(image: Image.Image) -> str:
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 class ApiRewardActor(ABC):
