@@ -4,7 +4,7 @@
     --custom-rm-args "hps=0.7,pickscore=0.3" --reward-key weighted
 
 For an OpenAI-compatible component, add ``--api-rm-config rewards.yaml`` and use
-weights such as ``openai_api=0.7,hps=0.3``.
+weights such as ``openai_api=0.7,hps=0.3``. A configurable actor uses ``custom_api=0.7,hps=0.3``.
 
 Each sample's reward is a dict holding every component plus ``"weighted"``, so each reward
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains
@@ -19,12 +19,19 @@ from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
+from .api import custom_api_rm
 from .hps import hps_rm
 from .ocr import ocr_rm
 from .openai_api import openai_api_rm
 from .pickscore import pickscore_rm
 
-_REWARDS = {"hps": hps_rm, "pickscore": pickscore_rm, "ocr": ocr_rm, "openai_api": openai_api_rm}
+_REWARDS = {
+    "hps": hps_rm,
+    "pickscore": pickscore_rm,
+    "ocr": ocr_rm,
+    "custom_api": custom_api_rm,
+    "openai_api": openai_api_rm,
+}
 
 
 def parse_weights(custom_rm_args: str) -> list[tuple[str, float]]:

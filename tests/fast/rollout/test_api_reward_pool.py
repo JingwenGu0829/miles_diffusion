@@ -124,7 +124,7 @@ def test_custom_api_loads_from_yaml_and_owns_request_and_response_formats(
     assert payloads == [{"prompt": "-7", "num_frames": 2}, {"prompt": "12.5", "num_frames": 1}]
 
 
-@pytest.mark.parametrize("actor_class", ["builtins.dict", "miles.rollout.rm_hub.api.api_rm"])
+@pytest.mark.parametrize("actor_class", ["builtins.dict", "miles.rollout.rm_hub.api.custom_api_rm"])
 def test_invalid_actor_class_is_rejected_before_creating_ray_worker(ray_worker, actor_class):
     remote, _ = ray_worker
     config = ApiRewardConfig(actor_class=actor_class)
@@ -147,6 +147,6 @@ def test_generic_and_openai_pools_have_separate_workers(ray_worker):
     generic_pool = AsyncApiRewardPool(args)
     openai_pool = AsyncOpenAIPool(args)
     assert generic_pool is not openai_pool
-    assert generic_pool.name == "api"
+    assert generic_pool.name == "custom_api"
     assert openai_pool.name == "openai_api"
     assert remote.call_count == 2

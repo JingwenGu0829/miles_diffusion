@@ -3,7 +3,7 @@
 Mental model:
 
     generated_output -> actor -> prompt + PNG request -> validated numeric score
-    api_rm -> singleton pool -> raw tensors in, scores and queue depth out
+    custom_api_rm -> singleton pool -> raw tensors in, scores and queue depth out
 
 Covered: the shared scoring contract; OpenAI image/prompt pairing and client configuration;
 fatal HTTP errors; image-only input; reward dispatch; YAML rubric loading and credential safety.
@@ -34,7 +34,7 @@ from PIL import Image
 import miles.rollout.rm_hub.api as api_module
 import miles.rollout.rm_hub.openai_api as openai_api_module
 from miles.rollout.rm_hub import async_rm, batched_async_rm
-from miles.rollout.rm_hub.api import ApiRewardActor, api_rm
+from miles.rollout.rm_hub.api import ApiRewardActor, custom_api_rm
 from miles.rollout.rm_hub.openai_api import OpenAIImageRewardActor, OpenAIImageScorer, openai_api_rm
 from miles.utils.api_rm_config import ApiRewardConfig, OpenAIImageRewardConfig, load_api_rm_config
 from miles.utils.types import Sample
@@ -46,7 +46,7 @@ def _config(**overrides):
 
 def _args():
     return Namespace(
-        rm_type="api", custom_rm_path=None, _api_rm_config=ApiRewardConfig(actor_kwargs=asdict(_config()))
+        rm_type="custom_api", custom_rm_path=None, _api_rm_config=ApiRewardConfig(actor_kwargs=asdict(_config()))
     )
 
 
@@ -134,7 +134,7 @@ def test_actor_preserves_image_prompt_pairing(sdk_transport):
 @pytest.mark.parametrize(
     "module, pool_name, rm_function, reward_name",
     [
-        (api_module, "AsyncApiRewardPool", api_rm, "api"),
+        (api_module, "AsyncApiRewardPool", custom_api_rm, "custom_api"),
         (openai_api_module, "AsyncOpenAIPool", openai_api_rm, "openai_api"),
     ],
 )
@@ -206,7 +206,7 @@ def test_video_is_rejected_before_http(sdk_transport):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "module, pool_name, rm_type",
-    [(api_module, "AsyncApiRewardPool", "api"), (openai_api_module, "AsyncOpenAIPool", "openai_api")],
+    [(api_module, "AsyncApiRewardPool", "custom_api"), (openai_api_module, "AsyncOpenAIPool", "openai_api")],
 )
 async def test_builtin_dispatch_and_per_sample_override(monkeypatch, module, pool_name, rm_type):
     pool = AsyncMock()

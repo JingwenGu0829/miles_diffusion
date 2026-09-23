@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import miles.rollout.rm_hub.api as api_module
 import miles.rollout.rm_hub.openai_api as openai_api_module
 import miles.rollout.rm_hub.weighted_mixture_rm as weighted_mixture_rm_module
 from miles.rollout.rm_hub.weighted_mixture_rm import parse_weights, weighted_mixture_rm
@@ -69,16 +70,20 @@ async def test_missing_reward_key_is_rejected_before_scoring(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_local_and_openai_api_rewards_mix(monkeypatch):
+@pytest.mark.parametrize(
+    "module, pool_name, rm_type",
+    [(api_module, "AsyncApiRewardPool", "custom_api"), (openai_api_module, "AsyncOpenAIPool", "openai_api")],
+)
+async def test_local_and_api_rewards_mix(monkeypatch, module, pool_name, rm_type):
     """Exercise the mixture's API dispatch without starting reward workers."""
     hps_rm = AsyncMock(return_value=[0.1, 0.2])
     monkeypatch.setitem(weighted_mixture_rm_module._REWARDS, "hps", hps_rm)
     pool = AsyncMock()
     pool.score.return_value = ([1.0, 2.0], 0)
-    monkeypatch.setattr(openai_api_module, "AsyncOpenAIPool", lambda args: pool)
+    monkeypatch.setattr(module, pool_name, lambda args: pool)
     args = Namespace(
         _api_rm_config=ApiRewardConfig(actor_kwargs={"model": "judge", "api_key_env": "TEST_RM_KEY"}),
-        custom_rm_args="hps=0.7,openai_api=0.3",
+        custom_rm_args=f"hps=0.7,{rm_type}=0.3",
         reward_key="weighted",
     )
     samples = [Sample(prompt="first"), Sample(prompt="second")]
@@ -86,7 +91,7 @@ async def test_local_and_openai_api_rewards_mix(monkeypatch):
     rewards = await weighted_mixture_rm(args, samples)
 
     assert [r["weighted"] for r in rewards] == pytest.approx([0.37, 0.74])
-    assert [(r["hps"], r["openai_api"]) for r in rewards] == [(0.1, 1.0), (0.2, 2.0)]
-    assert all(sample.reward_max_queue_depth == {"openai_api": 0.0} for sample in samples)
+    assert [(r["hps"], r[rm_type]) for r in rewards] == [(0.1, 1.0), (0.2, 2.0)]
+    assert all(sample.reward_max_queue_depth == {rm_type: 0.0} for sample in samples)
     hps_rm.assert_awaited_once_with(args, samples)
     pool.score.assert_awaited_once_with([None, None], ["first", "second"])

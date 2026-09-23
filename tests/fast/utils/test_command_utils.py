@@ -62,7 +62,7 @@ def test_submit_logs_only_selected_env_values_redacted(monkeypatch, capsys, reda
 
     monkeypatch.setattr(subprocess, "run", execute)
     kwargs = dict(
-        train_args="--api-rm-config unused.yaml --rm-type api",
+        train_args="--api-rm-config unused.yaml --rm-type custom_api",
         num_gpus_per_node=1,
         config=ExecuteTrainConfig(extra_env_vars='{"TEST_RM_KEY": "test-secret-not-for-logs"}'),
         extra_env_vars={"TEST_RM_KEY": "overridden-secret", "OTHER_API_KEY": "unselected-test-value"},

@@ -48,7 +48,7 @@ class ApiRewardActor(ABC):
 class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
     """API reward pool with one zero-GPU actor handling concurrent HTTP requests."""
 
-    name = "api"
+    name = "custom_api"
     actor_base_cls = ApiRewardActor
 
     def __init__(self, args) -> None:
@@ -70,8 +70,8 @@ class AsyncApiRewardPool(AsyncRewardActorPool, metaclass=SingletonMeta):
         )
 
 
-async def api_rm(args, samples: Sequence[Sample], **kwargs) -> list[float]:
+async def custom_api_rm(args, samples: Sequence[Sample], **kwargs) -> list[float]:
     pool = AsyncApiRewardPool(args)
     scores, max_queue_depth = await pool.score([s.generated_output for s in samples], [s.prompt for s in samples])
-    record_reward_queue_depth(samples, "api", max_queue_depth)
+    record_reward_queue_depth(samples, "custom_api", max_queue_depth)
     return scores

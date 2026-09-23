@@ -1237,7 +1237,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 "--rm-type",
                 type=str,
                 default=None,
-                help="Built-in reward (pickscore / hps / ocr / openai_api), or api for a configurable actor. "
+                help="Built-in reward (pickscore / hps / ocr / openai_api), or custom_api for a configurable actor. "
                 "Ignored when --custom-rm-path is set.",
             )
             parser.add_argument(
