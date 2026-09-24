@@ -1,6 +1,6 @@
 ---
 title: Rewards
-description: Built-in reward models (PickScore, HPS, OCR), rm_hub dispatch, and prompt data format.
+description: Built-in reward models (PickScore, HPS, OCR, DOVER), rm_hub dispatch, and prompt data format.
 ---
 Miles-diffusion scores generated images (or video frames) after each rollout
 microgroup. Reward computation lives in `miles/rollout/rm_hub/` and is invoked
@@ -13,7 +13,7 @@ For `--custom-rm-path`, `--custom-reward-post-process-path`, and other
 
 | Stage | Flag | Role |
 |---|---|---|
-| Reward type | `--rm-type` | Selects built-in scorer (`pickscore`, `hps`, `ocr`); ignored when `--custom-rm-path` is set |
+| Reward type | `--rm-type` | Selects built-in scorer (`pickscore`, `hps`, `ocr`, `dover`); ignored when `--custom-rm-path` is set |
 | Per-sample override | `metadata.rm_type` in JSONL | Overrides global `--rm-type` |
 | Custom reward / norm | see [Customization](customization.md) | `--custom-rm-path`, `--custom-reward-post-process-path` |
 
@@ -103,6 +103,55 @@ Example from `scripts/run_diffusion_grpo_sd3_hps_sglang.py`:
 --hps-reward-colocate
 ```
 
+### DOVER (`--rm-type dover`)
+
+Implementation: `miles/rollout/rm_hub/dover.py`.
+
+[DOVER](https://github.com/VQAssessment/DOVER) assesses video quality through separate
+technical and aesthetic branches. It does not evaluate adherence to the generation prompt.
+`--dover-score-type` selects `overall` (default), `aesthetic`, or `technical`; all return
+a scalar in [0, 1], with higher scores indicating better quality.
+
+The adapter uses the official `dover.yml` sampling: three 32-frame technical clips,
+assembled from 7×7 spatial fragments of 32×32 pixels, and one 32-frame aesthetic clip
+resized to 224×224. Short clips wrap frame indices as in the reference. Pixels are rounded
+to uint8; temporal and spatial sampling restart from `--seed` for every video, so batch
+order and worker assignment do not change the sampled views.
+
+Calibration follows the official `evaluate_a_set_of_videos.py`:
+
+```python
+t = (technical_raw - 0.1107) / 0.07355
+a = (aesthetic_raw + 0.08285) / 0.03774
+overall = sigmoid(0.6104 * t + 0.3896 * a)
+```
+
+The individual scores are `sigmoid(t)` and `sigmoid(a)`. EvalCrafter uses different
+calibration statistics for VQA_A/VQA_T; these reward values are not its benchmark scores.
+The calibration is for the original DOVER checkpoint, not DOVER++.
+
+The Docker image installs the official package at a fixed commit with `--no-deps`:
+its old PyTorch pin conflicts with Miles, and the PyPI package named `dover` is unrelated.
+For an existing Miles environment, install the same source after updating requirements:
+
+```bash
+pip install --no-deps "dover @ git+https://github.com/VQAssessment/DOVER@f1ddc96215bc7fbcf8f315c65d47905f339c3419"
+```
+
+Weights default to `teowu/DOVER/DOVER.pth`; `--dover-checkpoint-path` accepts a local copy.
+The official model constructor also downloads its ConvNeXt backbone on first use.
+
+```bash
+--rm-type dover --dover-score-type overall \
+--dover-num-workers 1 --dover-batch-size 1 --dover-reward-colocate
+```
+
+This assumes `--colocate`. For a dedicated reward GPU, omit `--dover-reward-colocate`.
+To combine video quality with PickScore, use the mixture example below with
+`--custom-rm-args "dover=0.5,pickscore=0.5" --reward-key weighted` and configure both pools.
+The adapter has an official-model alignment test in `tests/fast-gpu/test_dover_alignment.py`;
+it is not yet a validated video-training recipe.
+
 ### Reward placement
 
 Every GPU reward pool is placed one of two ways:
@@ -136,7 +185,7 @@ The example returns a dict per sample (`{"hps": ..., "pickscore": ..., "weighted
 `--reward-key` picks the entry GRPO trains on, and every entry of a dict reward gets its own
 `rollout/reward/<name>_mean` panel, so the components stay visible while the sum is optimized.
 
-Weights apply to raw scores (HPSv2.1 ≈ 0.25–0.35, PickScore/26 ≈ 0.8–0.9, OCR ∈ [0, 1]), so
+Weights apply to raw scores (HPSv2.1 ≈ 0.25–0.35, PickScore/26 ≈ 0.8–0.9, OCR and DOVER ∈ [0, 1]), so
 pick them with the scales in mind. Colocated pools share one slot ledger, so several rewards
 can colocate without overlapping. Rewards receive `generated_output` itself, and every reward actor
 quantises it to uint8 on its own terms.
@@ -180,8 +229,9 @@ generate_and_rm_microgroup()
     → custom_rm_path?  user batched function
     → all pickscore?   pickscore_rm (batched)
     → all hps?         hps_rm (batched)
+    → all dover?       dover_rm (batched video clips)
     → all ocr?         ocr_rm (batched, one image per actor call)
-    → else             per-sample async_rm → ocr / pickscore / hps / NotImplementedError
+    → else             per-sample async_rm → ocr / pickscore / hps / dover / NotImplementedError
   → sample.reward = score
   → RolloutManager._post_process_rewards()      # GRPO advantage normalization
 ```

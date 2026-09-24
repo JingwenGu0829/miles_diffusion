@@ -7,7 +7,7 @@ Each sample's reward is a dict holding every component plus ``"weighted"``, so e
 gets its own ``rollout/reward/<name>_mean`` panel while ``--reward-key`` picks what GRPO trains
 on. Each named reward scores the whole batch once and keeps its own placement flags
 (``--<rm>-reward-colocate``, ``--<rm>-num-gpus-per-worker``). Weights apply to raw scores,
-whose scales differ: HPSv2.1 ~0.3, PickScore/26 ~0.85, OCR in [0, 1].
+whose scales differ: HPSv2.1 ~0.3, PickScore/26 ~0.85, OCR and DOVER in [0, 1].
 """
 
 import asyncio
@@ -15,11 +15,12 @@ from collections.abc import Sequence
 
 from miles.utils.types import Sample
 
+from .dover import dover_rm
 from .hps import hps_rm
 from .ocr import ocr_rm
 from .pickscore import pickscore_rm
 
-_REWARDS = {"hps": hps_rm, "pickscore": pickscore_rm, "ocr": ocr_rm}
+_REWARDS = {"hps": hps_rm, "pickscore": pickscore_rm, "ocr": ocr_rm, "dover": dover_rm}
 
 
 def parse_weights(custom_rm_args: str) -> list[tuple[str, float]]:
