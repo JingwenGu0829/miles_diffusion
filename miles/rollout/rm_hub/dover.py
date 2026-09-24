@@ -12,43 +12,30 @@ from miles.utils.types import Sample
 
 from .core import AsyncRewardActorPool, record_reward_queue_depth
 
-# DOVER's dover.yml: three technical clips and one temporally fragmented aesthetic clip.
-_SAMPLE_TYPES = {
+_VIEW_OPTIONS = {
     "technical": {
         "fragments_h": 7,
         "fragments_w": 7,
         "fsize_h": 32,
         "fsize_w": 32,
         "aligned": 32,
-        "clip_len": 32,
-        "frame_interval": 2,
-        "num_clips": 3,
     },
-    "aesthetic": {
-        "size_h": 224,
-        "size_w": 224,
-        "clip_len": 32,
-        "frame_interval": 2,
-        "t_frag": 32,
-        "num_clips": 1,
-    },
+    "aesthetic": {"size_h": 224, "size_w": 224},
 }
 
 
 class _DOVERVideoTransform:
+    """Adapt DOVER's file-based preprocessing to in-memory CFHW videos."""
+
     def __init__(self, seed: int = 0) -> None:
         from dover.datasets import UnifiedFrameSampler, get_single_view
 
         self.seed = seed
         self.get_single_view = get_single_view
+        # dover.yml: three technical clips and one temporally fragmented aesthetic clip.
         self.samplers = {
-            name: UnifiedFrameSampler(
-                opt["clip_len"] // opt.get("t_frag", 1),
-                opt.get("t_frag", opt["num_clips"]),
-                opt["frame_interval"],
-                opt["num_clips"] if "t_frag" in opt else 1,
-            )
-            for name, opt in _SAMPLE_TYPES.items()
+            "technical": UnifiedFrameSampler(32, 3, 2),
+            "aesthetic": UnifiedFrameSampler(1, 32, 2),
         }
         self.mean = torch.tensor([123.675, 116.28, 103.53]).view(3, 1, 1, 1)
         self.std = torch.tensor([58.395, 57.12, 57.375]).view(3, 1, 1, 1)
@@ -65,11 +52,11 @@ class _DOVERVideoTransform:
                 np.random.seed(self.seed)
                 indices = {name: sampler(output.shape[1]) for name, sampler in self.samplers.items()}
                 views = {}
-                for name, opt in _SAMPLE_TYPES.items():
+                for name, opt in _VIEW_OPTIONS.items():
                     video = image_or_video_to_uint8(output[:, indices[name]].detach().cpu(), round_normalized=True)
                     view = self.get_single_view(video, name, **opt)
                     view = (view - self.mean) / self.std
-                    views[name] = view.reshape(3, opt["num_clips"], -1, 224, 224).transpose(0, 1)
+                    views[name] = view.reshape(3, -1, 32, 224, 224).transpose(0, 1)
                 return views
         finally:
             np.random.set_state(numpy_state)
@@ -118,7 +105,7 @@ class DOVERScorer(torch.nn.Module):
     @torch.no_grad()
     def forward(self, outputs: Sequence[torch.Tensor]) -> list[float]:
         views = [self.preprocess(output) for output in outputs]
-        batch = {name: torch.cat([view[name] for view in views]).to(self.device) for name in _SAMPLE_TYPES}
+        batch = {name: torch.cat([view[name] for view in views]).to(self.device) for name in _VIEW_OPTIONS}
         predictions = self.model(batch, reduce_scores=False)
         scores = {
             name: prediction.reshape(len(outputs), -1).mean(dim=1)
