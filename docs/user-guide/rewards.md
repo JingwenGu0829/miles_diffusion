@@ -107,50 +107,48 @@ Example from `scripts/run_diffusion_grpo_sd3_hps_sglang.py`:
 
 Implementation: `miles/rollout/rm_hub/dover.py`.
 
-[DOVER](https://github.com/VQAssessment/DOVER) assesses video quality through separate
-technical and aesthetic branches. It does not evaluate adherence to the generation prompt.
-`--dover-score-type` selects `overall` (default), `aesthetic`, or `technical`; all return
-a scalar in [0, 1], with higher scores indicating better quality.
+[DOVER](https://github.com/VQAssessment/DOVER) scores video quality through technical
+and aesthetic branches, independently of the generation prompt:
 
-The adapter uses the official `dover.yml` sampling: three 32-frame technical clips,
-assembled from 7×7 spatial fragments of 32×32 pixels, and one 32-frame aesthetic clip
-resized to 224×224. Short clips wrap frame indices as in the reference. Pixels are rounded
-to uint8; temporal and spatial sampling restart from `--seed` for every video, so batch
-order and worker assignment do not change the sampled views.
+- Model: DOVER (original checkpoint)
+- Score: `--dover-score-type` (`overall`, `aesthetic`, or `technical`)
+- Checkpoint: `--dover-checkpoint-path` (optional; defaults to `teowu/DOVER/DOVER.pth`)
 
-Calibration follows the official `evaluate_a_set_of_videos.py`:
+Scoring formula:
 
-```python
+```
 t = (technical_raw - 0.1107) / 0.07355
 a = (aesthetic_raw + 0.08285) / 0.03774
-overall = sigmoid(0.6104 * t + 0.3896 * a)
+score = sigmoid(0.6104 * t + 0.3896 * a)
 ```
 
-The individual scores are `sigmoid(t)` and `sigmoid(a)`. EvalCrafter uses different
-calibration statistics for VQA_A/VQA_T; these reward values are not its benchmark scores.
-The calibration is for the original DOVER checkpoint, not DOVER++.
+This is the official overall calibration. The individual scores are `sigmoid(t)`
+and `sigmoid(a)`; all scores are in [0, 1], with higher values indicating better quality.
 
-The Docker image installs the official package at a fixed commit with `--no-deps`:
-its old PyTorch pin conflicts with Miles, and the PyPI package named `dover` is unrelated.
-For an existing Miles environment, install the same source after updating requirements:
+DOVER runs as a **Ray actor pool** (`DOVERRewardActor`) with round-robin batching.
+Each video produces three 32-frame technical clips and one 32-frame aesthetic clip.
+Sampling restarts from `--seed` for each video, independently of batch order.
+The Docker image includes DOVER; for an existing environment, use the pinned install
+command in `docker/Dockerfile` after updating `requirements.txt`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dover-num-workers` | 1 | Ray actor count |
+| `--dover-num-gpus-per-worker` | 1.0 | GPU per worker (non-colocate) |
+| `--dover-batch-size` | 1 | Videos per actor batch |
+| `--dover-score-type` | `overall` | `overall`, `aesthetic`, or `technical` score |
+| `--dover-checkpoint-path` | None | Local checkpoint; unset downloads `teowu/DOVER/DOVER.pth` |
+| `--dover-reward-colocate` | False | One worker per rollout GPU (requires `--colocate`) |
+
+Example:
 
 ```bash
-pip install --no-deps "dover @ git+https://github.com/VQAssessment/DOVER@f1ddc96215bc7fbcf8f315c65d47905f339c3419"
+--rm-type dover \
+--dover-num-workers 1 \
+--dover-batch-size 1 \
+--dover-score-type overall \
+--dover-reward-colocate
 ```
-
-Weights default to `teowu/DOVER/DOVER.pth`; `--dover-checkpoint-path` accepts a local copy.
-The official model constructor also downloads its ConvNeXt backbone on first use.
-
-```bash
---rm-type dover --dover-score-type overall \
---dover-num-workers 1 --dover-batch-size 1 --dover-reward-colocate
-```
-
-This assumes `--colocate`. For a dedicated reward GPU, omit `--dover-reward-colocate`.
-To combine video quality with PickScore, use the mixture example below with
-`--custom-rm-args "dover=0.5,pickscore=0.5" --reward-key weighted` and configure both pools.
-The adapter has an official-model alignment test in `tests/fast-gpu/test_dover_alignment.py`;
-it is not yet a validated video-training recipe.
 
 ### Reward placement
 
